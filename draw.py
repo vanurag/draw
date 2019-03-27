@@ -26,12 +26,12 @@ A, B = 28, 28  # image width,height
 img_size = B * A  # the canvas size
 enc_size = 256  # number of hidden units / output size in LSTM
 dec_size = 256
-read_n = 5  # read glimpse grid width/height
+read_n = 3  # read glimpse grid width/height
 write_n = 1  # write glimpse grid width/height
 read_size = 2 * read_n * read_n if FLAGS.read_attn else 2 * img_size
 write_size = write_n * write_n if FLAGS.write_attn else img_size
-z_size = 10  # QSampler output size
-T = 30  # MNIST generation sequence length
+z_size = 100  # QSampler output size
+T = 64  # MNIST generation sequence length
 batch_size = 100  # training minibatch size
 train_iters = 10000
 learning_rate = 1e-3  # learning rate for optimizer
@@ -54,7 +54,8 @@ def linear(x, output_dim):
   assumes x.shape = (batch_size, num_features)
   """
   w = tf.get_variable("w", [x.get_shape()[1], output_dim]) 
-  b = tf.get_variable("b", [output_dim], initializer=tf.constant_initializer(0.0))
+#   b = tf.get_variable("b", [output_dim], initializer=tf.constant_initializer(0.0))
+  b = tf.get_variable("b", [output_dim], initializer=tf.random_normal_initializer())
   return tf.matmul(x, w) + b
 
 
@@ -153,10 +154,12 @@ def write_no_attn(h_dec):
 
 def write_attn(h_dec):
   with tf.variable_scope("writeW", reuse=DO_SHARE):
-      w = linear(h_dec, write_size)  # batch x (write_n*write_n)
+      w = tf.sigmoid(linear(h_dec, write_size))  # batch x (write_n*write_n)
+#   w = tf.ones((batch_size, write_size))
   N = write_n
   w = tf.reshape(w, [batch_size, N, N])
   Fx, Fy, gamma, gx, gy, sigma2, delta = attn_window("write", h_dec, write_n)
+#   gamma = tf.nn.relu(gamma)
   Fyt = tf.transpose(Fy, perm=[0, 2, 1])
   wr = tf.matmul(Fyt, tf.matmul(w, Fx))
   wr = tf.reshape(wr, [batch_size, B * A])
@@ -181,7 +184,7 @@ dec_state = lstm_dec.zero_state(batch_size, tf.float32)
 # construct the unrolled computational graph
 for t in range(T):
   c_prev = tf.zeros((batch_size, img_size)) if t == 0 else cs[t - 1]
-  x_hat = x - tf.sigmoid(c_prev)  # error image
+  x_hat = x - tf.tanh(c_prev)  # error image
   r = read(x, x_hat, h_dec_prev)
   h_enc, enc_state = encode(enc_state, tf.concat([r, h_dec_prev], 1))
   z, mus[t], logsigmas[t], sigmas[t] = sampleQ(h_enc)
@@ -200,7 +203,7 @@ def binary_crossentropy(t, o):
 
 
 # reconstruction term appears to have been collapsed down to a single scalar value (rather than one per item in minibatch)
-x_recons = tf.nn.sigmoid(cs[-1])
+x_recons = tf.nn.tanh(cs[-1])
 
 # after computing binary cross entropy, sum across features then take the mean of those sums across minibatches
 Lx = tf.reduce_sum(binary_crossentropy(x, x_recons), 1)  # reconstruction term
