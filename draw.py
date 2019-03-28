@@ -14,29 +14,65 @@ from tensorflow.examples.tutorials import mnist
 import numpy as np
 import os
 import sys
+import math
 
 tf.flags.DEFINE_string("data_dir", "", "")
 tf.flags.DEFINE_boolean("read_attn", True, "enable attention for reader")
 tf.flags.DEFINE_boolean("write_attn", True, "enable attention for writer")
 FLAGS = tf.flags.FLAGS
 
-# # MODEL PARAMETERS ## 
+# # MODEL PARAMETERS ##
 
-A, B = 28, 28  # image width,height
+# # MNIST
+# A, B = 28, 28  # image width,height
+# img_size = B * A  # the canvas size
+# enc_size = 256  # number of hidden units / output size in LSTM
+# dec_size = 256
+# read_n = 3  # read glimpse grid width/height
+# write_n = 1  # write glimpse grid width/height
+# read_size = 2 * read_n * read_n if FLAGS.read_attn else 2 * img_size
+# write_size = write_n * write_n if FLAGS.write_attn else img_size
+# z_size = 100  # QSampler output size
+# T = 64  # MNIST generation sequence length
+# batch_size = 100  # training minibatch size
+# train_iters = 10000
+# learning_rate = 1e-3  # learning rate for optimizer
+# eps = 1e-8  # epsilon for numerical stability
+# draw_with_white = True;  # draw with white ink or black ink
+
+# # ETH
+A, B = 32, 32  # image width,height
 img_size = B * A  # the canvas size
-enc_size = 256  # number of hidden units / output size in LSTM
-dec_size = 256
-read_n = 3  # read glimpse grid width/height
+enc_size = 400  # number of hidden units / output size in LSTM
+dec_size = 400
+read_n = 5  # read glimpse grid width/height
 write_n = 1  # write glimpse grid width/height
 read_size = 2 * read_n * read_n if FLAGS.read_attn else 2 * img_size
 write_size = write_n * write_n if FLAGS.write_attn else img_size
-z_size = 100  # QSampler output size
+z_size = 200  # QSampler output size
 T = 64  # MNIST generation sequence length
 batch_size = 100  # training minibatch size
 train_iters = 10000
 learning_rate = 1e-3  # learning rate for optimizer
 eps = 1e-8  # epsilon for numerical stability
-draw_with_white = True;  # draw with white ink or black ink
+draw_with_white = False;  # draw with white ink or black ink
+
+# # DEBUG
+# A, B = 4, 4  # image width,height
+# img_size = B * A  # the canvas size
+# enc_size = 5  # number of hidden units / output size in LSTM
+# dec_size = 5
+# read_n = 3  # read glimpse grid width/height
+# write_n = 1  # write glimpse grid width/height
+# read_size = 2 * read_n * read_n if FLAGS.read_attn else 2 * img_size
+# write_size = write_n * write_n if FLAGS.write_attn else img_size
+# z_size = 5  # QSampler output size
+# T = 5  # MNIST generation sequence length
+# batch_size = 100  # training minibatch size
+# train_iters = 1000
+# learning_rate = 1e-3  # learning rate for optimizer
+# eps = 1e-8  # epsilon for numerical stability
+# draw_with_white = False;  # draw with white ink or black ink
 
 # # BUILD MODEL ## 
 
@@ -92,11 +128,11 @@ def attn_window(scope, h_dec, N):
 
 # # READ ## 
 def read_no_attn(x, x_hat, h_dec_prev):
-  return tf.concat([x, x_hat], 1)
+  return tf.concat([x, x_hat], 1), tf.concat([0, 0, 0], 1)
 
 
 def read_attn(x, x_hat, h_dec_prev):
-  Fx, Fy, gamma, _, _, _, _ = attn_window("read", h_dec_prev, read_n)
+  Fx, Fy, gamma, gx, gy, _, delta = attn_window("read", h_dec_prev, read_n)
 
   def filter_img(img, Fx, Fy, gamma, N):
       Fxt = tf.transpose(Fx, perm=[0, 2, 1])
@@ -107,7 +143,7 @@ def read_attn(x, x_hat, h_dec_prev):
 
   x = filter_img(x, Fx, Fy, gamma, read_n)  # batch x (read_n*read_n)
   x_hat = filter_img(x_hat, Fx, Fy, gamma, read_n)
-  return tf.concat([x, x_hat], 1)  # concat along feature axis
+  return tf.concat([x, x_hat], 1), tf.concat([gx, gy, (read_n - 1) * delta], 1)  # concat along feature axis
 
 
 read = read_attn if FLAGS.read_attn else read_no_attn
@@ -149,7 +185,7 @@ def decode(state, input):
 # # WRITER ## 
 def write_no_attn(h_dec):
   with tf.variable_scope("write", reuse=DO_SHARE):
-      return linear(h_dec, img_size)
+      return linear(h_dec, img_size), tf.concat([0, 0, 0], 1)
 
 
 def write_attn(h_dec):
@@ -158,13 +194,13 @@ def write_attn(h_dec):
 #   w = tf.ones((batch_size, write_size))
   N = write_n
   w = tf.reshape(w, [batch_size, N, N])
-  Fx, Fy, gamma, gx, gy, sigma2, delta = attn_window("write", h_dec, write_n)
+  Fx, Fy, gamma, gx, gy, sigma2, _ = attn_window("write", h_dec, write_n)
 #   gamma = tf.nn.relu(gamma)
   Fyt = tf.transpose(Fy, perm=[0, 2, 1])
   wr = tf.matmul(Fyt, tf.matmul(w, Fx))
   wr = tf.reshape(wr, [batch_size, B * A])
   # gamma=tf.tile(gamma,[1,B*A])
-  return wr * tf.reshape(1.0 / gamma, [-1, 1]), tf.concat([gx, gy, sigma2], 1)
+  return wr * tf.reshape(1.0 / gamma, [-1, 1]), tf.concat([gx, gy, 4.0 * tf.sqrt(sigma2)], 1)
 
 
 write = write_attn if FLAGS.write_attn else write_no_attn
@@ -172,7 +208,8 @@ write = write_attn if FLAGS.write_attn else write_no_attn
 # # STATE VARIABLES ## 
 
 cs = [0] * T  # sequence of canvases
-bb = [0] * T  # sequence of bounding boxes (center (x,y), size (w,h))
+read_bb = [0] * T  # sequence of bounding boxes for reading (center (x,y), (read_n-1)*delta)
+write_bb = [0] * T  # sequence of bounding boxes for writing (center (x,y), 4*sigma)
 mus, logsigmas, sigmas = [0] * T, [0] * T, [0] * T  # gaussian params generated by SampleQ. We will need these for computing loss.
 # initial states
 h_dec_prev = tf.zeros((batch_size, dec_size))
@@ -186,12 +223,13 @@ for t in range(T):
   c_prev = tf.zeros((batch_size, img_size)) if t == 0 else cs[t - 1]
   x_hat = x - tf.tanh(c_prev)  # error image
   r = read(x, x_hat, h_dec_prev)
-  h_enc, enc_state = encode(enc_state, tf.concat([r, h_dec_prev], 1))
+  h_enc, enc_state = encode(enc_state, tf.concat([r[0], h_dec_prev], 1))
+  read_bb[t] = r[1]
   z, mus[t], logsigmas[t], sigmas[t] = sampleQ(h_enc)
   h_dec, dec_state = decode(dec_state, z)
   write_output = write(h_dec)
   cs[t] = c_prev + write_output[0]  # store results
-  bb[t] = write_output[1]
+  write_bb[t] = write_output[1]
   h_dec_prev = h_dec
   DO_SHARE = True  # from now on, share variables
 
@@ -244,7 +282,7 @@ def _parse_function(filename):
   image_resized = tf.image.resize_images(image_converted, [A, B])
   image_flattened = tf.reshape(image_resized, [-1])
   if not draw_with_white:
-    image_flipped = tf.add(tf.multiply(image_flattened, -1.0), 1.0)
+    image_flipped = 1.0 - image_flattened
     return image_flipped
   return image_flattened
 
@@ -264,12 +302,15 @@ data_files = tf.gfile.ListDirectory(data_directory)
 data_filenames = []
 for f in data_files:
   data_filenames = data_filenames + [os.path.join(data_directory, f)]
+train_split_size = int(math.floor((0.9 * len(data_filenames))))
+test_split_size = int(math.floor(0.1 * len(data_filenames)))
 dataset = tf.data.Dataset.from_tensor_slices(data_filenames)
 dataset = dataset.map(_parse_function)
-dataset = dataset.repeat().shuffle(len(data_filenames))
-batched_dataset = dataset.batch(batch_size)
-dataset_iterator = batched_dataset.make_one_shot_iterator()
-next_training_batch = dataset_iterator.get_next()
+dataset = dataset.shuffle(len(data_filenames))
+train_dataset = dataset.take(train_split_size).repeat()
+batched_train_dataset = train_dataset.batch(batch_size)
+train_dataset_iterator = batched_train_dataset.make_one_shot_iterator()
+next_training_batch = train_dataset_iterator.get_next()
 
 fetches = []
 fetches.extend([Lx, Lz, train_op])
@@ -293,12 +334,42 @@ for i in range(train_iters):
 
 # # TRAINING FINISHED ## 
 
-canvases, bounding_boxes = sess.run([cs, bb], feed_dict)  # generate some examples
+# Testing
+test_dataset = dataset.skip(train_split_size)
+batched_test_dataset = test_dataset.batch(batch_size)
+test_dataset_iterator = batched_test_dataset.make_one_shot_iterator()
+next_testing_batch = test_dataset_iterator.get_next()
+num_test_batches = int(math.floor(test_split_size / batch_size))
+fetches = []
+fetches.extend([Lx, Lz])
+Lx_test = 0.0
+Lz_test = 0.0
+for i in range(num_test_batches):
+	xtest = sess.run(next_testing_batch)
+	feed_dict = {x:xtest}
+	results = sess.run(fetches, feed_dict)
+	Lx_test_i, Lz_test_i = results
+	Lx_test += Lx_test_i + Lx_test_i
+	Lz_test += Lz_test_i + Lz_test_i
+Lx_test /= num_test_batches
+Lz_test /= num_test_batches
+print("Test dataset results : Lx: %f Lz: %f" % (Lx_test, Lz_test))
+
+# Logging + Visualization
+log_dataset = test_dataset.take(batch_size)
+batched_log_dataset = log_dataset.batch(batch_size)
+log_dataset_iterator = batched_log_dataset.make_one_shot_iterator()
+log_batch = log_dataset_iterator.get_next()
+xlog = sess.run(log_batch)
+feed_dict = {x:xlog}
+
+canvases, read_bounding_boxes, write_bounding_boxes = sess.run([cs, read_bb, write_bb], feed_dict)  # generate some examples
 canvases = np.array(canvases)  # T x batch x img_size
-bounding_boxes = np.array(bounding_boxes)  # T x batch x 3
+read_bounding_boxes = np.array(read_bounding_boxes)  # T x batch x 3
+write_bounding_boxes = np.array(write_bounding_boxes)  # T x batch x 3
 
 out_file = os.path.join(FLAGS.data_dir, "draw_data.npy")
-np.save(out_file, [xtrain, canvases, bounding_boxes, Lxs, Lzs])
+np.save(out_file, [xlog, canvases, read_bounding_boxes, write_bounding_boxes, Lxs, Lzs])
 print("Outputs saved in file: %s" % out_file)
 
 ckpt_file = os.path.join(FLAGS.data_dir, "drawmodel.ckpt")
