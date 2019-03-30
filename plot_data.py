@@ -12,7 +12,7 @@ if not interactive:
 import matplotlib.pyplot as plt
 
 
-def xrecons_grid(X, rBB, wBB, B, A):
+def xrecons_grid(X, rBB, wBB, B, A, draw_with_white):
 	"""
 	plots canvas for single time step
 	X is x_recons, (batch_size x img_size)
@@ -38,9 +38,9 @@ def xrecons_grid(X, rBB, wBB, B, A):
 			endr = startr + B
 			startc = j * pw + padsize
 			endc = startc + A
-			rgb_img[startr:endr, startc:endc, 0] = X[i, j, :, :]
-			rgb_img[startr:endr, startc:endc, 1] = X[i, j, :, :]
-			rgb_img[startr:endr, startc:endc, 2] = X[i, j, :, :]
+			rgb_img[startr:endr, startc:endc, 0] = X[i, j, :, :] if draw_with_white else 1.0 - X[i, j, :, :]
+			rgb_img[startr:endr, startc:endc, 1] = X[i, j, :, :] if draw_with_white else 1.0 - X[i, j, :, :]
+			rgb_img[startr:endr, startc:endc, 2] = X[i, j, :, :] if draw_with_white else 1.0 - X[i, j, :, :]
 
 			# Reading bounding box
 			if rBB is not None:
@@ -77,16 +77,17 @@ def xrecons_grid(X, rBB, wBB, B, A):
 if __name__ == '__main__':
 	prefix = sys.argv[1]
 	out_file = sys.argv[2]
+	draw_with_white = False
 	[In, C, rBBs, wBBs, Lxs, Lzs] = np.load(out_file)
 	T, batch_size, img_size = C.shape
 # 	X = 1.0 / (1.0 + np.exp(-C))  # x_recons=sigmoid(canvas)
 	X = (np.exp(2 * C) - 1) / (np.exp(2 * C) + 1)  # x_recons=tanh(canvas)
 	B = A = int(np.sqrt(img_size))
-	input_img = xrecons_grid(In, None, None, B, A)
+	input_img = xrecons_grid(In, None, None, B, A, draw_with_white)
 	if interactive:
 		f, arr = plt.subplots(2, T)
 	for t in range(T):
-		img = xrecons_grid(X[t, :, :], rBBs[t, :, :], wBBs[t, :, :], B, A)
+		img = xrecons_grid(X[t, :, :], rBBs[t, :, :], wBBs[t, :, :], B, A, draw_with_white)
 		if interactive:
 			arr[0, t].imshow(input_img, vmin=0, vmax=1)
 			arr[1, t].imshow(img, vmin=0, vmax=1)
@@ -102,6 +103,11 @@ if __name__ == '__main__':
 	if not interactive:
 		plt.imshow(input_img, vmin=0, vmax=1)
 		imgname = '%s_ref.png' % (prefix)
+		plt.savefig(imgname)
+		print(imgname)
+		res_img = xrecons_grid(X[-1, :, :], None, None, B, A, draw_with_white)
+		plt.imshow(res_img, vmin=0, vmax=1)
+		imgname = '%s_result.png' % (prefix)
 		plt.savefig(imgname)
 		print(imgname)
 	f = plt.figure()
