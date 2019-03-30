@@ -330,9 +330,6 @@ train_op = optimizer.apply_gradients(grads)
 def _parse_function(filename):
   image_string = tf.read_file(filename)
   image_gray = tf.image.decode_jpeg(image_string, channels=1)
-#   image_gray = image_decoded
-#   if image_decoded.get_shape()[-1] == 3:
-#   image_gray = tf.image.rgb_to_grayscale(image_decoded)
   image_converted = tf.image.convert_image_dtype(image_gray, tf.float32)
   image_resized = tf.image.resize_images(image_converted, [A, B])
   image_flattened = tf.reshape(image_resized, [-1])
@@ -340,12 +337,6 @@ def _parse_function(filename):
     image_flipped = 1.0 - image_flattened
     return image_flipped
   return image_flattened
-
-# MNIST
-# data_directory = os.path.join(FLAGS.data_dir, "mnist")
-# if not os.path.exists(data_directory):
-# 	os.makedirs(data_directory)
-# train_data = mnist.input_data.read_data_sets(data_directory, one_hot=True).train # binarized (0-1) mnist data
 
 
 # CUSTOM
@@ -360,14 +351,7 @@ data_filenames = [os.path.join(data_directory, data_files[i]) for i in idx]
 # data_filenames = data_filenames[:1000]  # DEBUG
 dataset = tf.data.Dataset.from_tensor_slices(data_filenames)
 dataset = dataset.map(_parse_function)
-
-# dataset = dataset.shuffle(len(data_filenames))
-# train_split_size = int(math.floor((0.99 * len(data_filenames))))
-# test_split_size = int(math.floor(0.01 * len(data_filenames)))
-# train_dataset = dataset.take(train_split_size).repeat().batch(batch_size)
-# train_dataset = dataset.shuffle(len(data_filenames)).repeat().batch(batch_size)
 train_dataset = dataset.repeat().batch(config['batch_size'])
-
 train_dataset_iterator = train_dataset.make_one_shot_iterator()
 next_training_batch = train_dataset_iterator.get_next()
 
@@ -395,7 +379,6 @@ test_fetches = []
 train_fetches.extend([merged_summaries, Lx, Lz, train_op])
 test_fetches.extend([merged_summaries, Lx, Lz])
 for i in range(config['train_iters']):
-	# xtrain,_=train_data.next_batch(batch_size) # xtrain is (batch_size x img_size)
 	xnext = sess.run(next_training_batch)
 	feed_dict = {x:xnext}
 	if i % 100 == 0:
@@ -410,35 +393,8 @@ for i in range(config['train_iters']):
 
 # # TRAINING FINISHED ## 
 
-# Testing
-# test_dataset = dataset.skip(train_split_size).batch(batch_size)
-# test_dataset_iterator = test_dataset.make_one_shot_iterator()
-# next_testing_batch = test_dataset_iterator.get_next()
-# num_test_batches = int(math.floor(test_split_size / batch_size))
-# fetches = []
-# fetches.extend([Lx, Lz])
-# Lx_test = 0.0
-# Lz_test = 0.0
-# for i in range(num_test_batches):
-# 	xtest = sess.run(next_testing_batch)
-# 	feed_dict = {x:xtest}
-# 	results = sess.run(fetches, feed_dict)
-# 	Lx_test_i, Lz_test_i = results
-# 	Lx_test += Lx_test_i + Lx_test_i
-# 	Lz_test += Lz_test_i + Lz_test_i
-# Lx_test /= num_test_batches
-# Lz_test /= num_test_batches
-# print("Test dataset results : Lx: %f Lz: %f" % (Lx_test, Lz_test))
-
 # # Logging + Visualization
-# log_dataset = test_dataset.take(batch_size)
-# batched_log_dataset = log_dataset.batch(batch_size)
-# log_dataset_iterator = batched_log_dataset.make_one_shot_iterator()
-# log_batch = log_dataset_iterator.get_next()
-# xlog = sess.run(log_batch)
-
 feed_dict = {x:xlog}
-
 canvases, read_bounding_boxes, write_bounding_boxes = sess.run([cs, read_bb, write_bb], feed_dict)  # generate some examples
 canvases = np.array(canvases)  # T x batch x img_size
 read_bounding_boxes = np.array(read_bounding_boxes)  # T x batch x 3
