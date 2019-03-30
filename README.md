@@ -12,17 +12,17 @@ For a gentle walkthrough through the paper and implementation, see the writeup h
 
 ## Usage
 
-`python draw.py --data_dir=/tmp/draw` downloads the binarized MNIST dataset to /tmp/draw/mnist and trains the DRAW model with attention enabled for both reading and writing. After training, output data is written to `/tmp/draw/draw_data.npy`
+`python draw.py --data_dir=/tmp/draw --log_dir=/tmp/draw/logs` uses images provided in data\_dir and trains the DRAW model with attention enabled for both reading and writing. After training, output data is written to log\_dir
+
+Tensorboard summaries can be monitored using `tensorboard --logdir=<log-dir>`
 
 You can visualize the results by running the script `python plot_data.py <prefix> <output_data>`
 
 For example, 
 
-`python myattn /tmp/draw/draw_data.npy`
+`python plot_data.py myattn /tmp/draw/draw_data.npy`
 
-To run training without attention, do:
-
-`python draw.py --working_dir=/tmp/draw --read_attn=False --write_attn=False`
+Parameters can be modified in config.py
 
 ## Restoring from Pre-trained Model
 

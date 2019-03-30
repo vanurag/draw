@@ -4,7 +4,7 @@
 Simple implementation of http://arxiv.org/pdf/1502.04623v2.pdf in TensorFlow
 
 Example Usage: 
-	python draw.py --data_dir=/tmp/draw --read_attn=True --write_attn=True
+	python draw.py --data_dir=/tmp/draw --log_dir=/tmp/draw/logs
 
 Author: Eric Jang
 """
@@ -19,6 +19,7 @@ import time
 from config import config
 
 tf.flags.DEFINE_string("data_dir", "", "")
+tf.flags.DEFINE_string("log_dir", "", "")
 tf.flags.DEFINE_boolean("read_attn", True, "enable attention for reader")
 tf.flags.DEFINE_boolean("write_attn", True, "enable attention for writer")
 FLAGS = tf.flags.FLAGS
@@ -340,7 +341,7 @@ def _parse_function(filename):
 
 
 # CUSTOM
-data_directory = os.path.join(FLAGS.data_dir, "train_data")
+data_directory = FLAGS.data_dir
 if not os.path.exists(data_directory):
   print("Train data not found")
   sys.exit()
@@ -362,7 +363,7 @@ Lzs = [0] * config['train_iters']
 sess = tf.InteractiveSession()
 
 timestamp = str(int(time.time()))
-config['log_dir'] = os.path.abspath(os.path.join(FLAGS.data_dir, 'logs', 'DRAW' + '_' + timestamp))
+config['log_dir'] = os.path.abspath(os.path.join(FLAGS.log_dir, 'DRAW' + '_' + timestamp))
 os.makedirs(config['log_dir'])
 print('Logging data to {}'.format(config['log_dir']))
 export_config(config, os.path.join(config['log_dir'], 'config.txt'))
