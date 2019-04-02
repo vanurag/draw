@@ -17,6 +17,7 @@ import sys
 import math
 import time
 from config import config
+from mercurial.hg import addbranchrevs
 
 tf.flags.DEFINE_string("data_dir", "", "")
 tf.flags.DEFINE_string("log_dir", "", "")
@@ -272,18 +273,22 @@ for t in range(T):
   h_dec, dec_state = decode(dec_state, z)
   write_output = write(h_dec)
   cs[t] = c_prev + write_output[0]  # store results
-#   scs[t] = tf.image.resize_bicubic(tf.reshape(cs[t][0, :], [B, A]), [100, 100])
-  scs[t] = tf.reshape(cs[t][0, :], [B, A])
+  if config['draw_with_white']:
+    scs[t] = tf.transpose(tf.reshape(cs[t][:config['n_summary_per_batch'], :], [config['n_summary_per_batch'], B, A]), perm=[1, 0, 2])  # B x batch_size x A
+  else:
+    scs[t] = tf.transpose(tf.reshape(1 - cs[t][:config['n_summary_per_batch'], :], [config['n_summary_per_batch'], B, A]), perm=[1, 0, 2])  # B x batch_size x A
   write_bb[t] = write_output[1]
   h_dec_prev = h_dec
   DO_SHARE = True  # from now on, share variables
-summary_canvas = tf.convert_to_tensor(scs)  # T x B x A
-summary_canvas_merged = tf.reshape(summary_canvas, shape=(T * B, A))  # shape=(T * B, A)
-# summary_canvas_merged = tf.reshape(summary_canvas, shape=(T * 100, 100))  # shape=(T * B, A)
-# tf.summary.image('canvas', tf.reshape(summary_canvas_merged, [1, T * 100, 100, 1]), max_outputs=1)  # [1, T * B, A, 1]
-tf.summary.image('canvas', tf.reshape(summary_canvas_merged, [1, T * B, A, 1]), max_outputs=1)  # [1, T * B, A, 1]
-# tf.summary.image('reference', tf.reshape(tf.image.resize_images(tf.reshape(x, [B, A]), [100, 100]), [1, 100, 100, 1]), max_outputs=1)  # [1, B, A, 1]
-tf.summary.image('reference', tf.reshape(x[0, :], [1, B, A, 1]), max_outputs=1)  # [1, B, A, 1]
+summary_canvas = tf.convert_to_tensor(scs)  # T x B x batch_size x A
+summary_canvas_merged = tf.reshape(summary_canvas, shape=(T * B, config['n_summary_per_batch'] * A))  # shape=(T * B, batch_size * A)
+tf.summary.image('canvas', tf.reshape(summary_canvas_merged, [1, T * B, config['n_summary_per_batch'] * A, 1]), max_outputs=1)  # [1, T * B, batch_size * A, 1]
+if config['draw_with_white']:
+	sx = tf.transpose(tf.reshape(x[:config['n_summary_per_batch'], :], [config['n_summary_per_batch'], B, A]), perm=[1, 0, 2])
+else:
+	sx = tf.transpose(tf.reshape(1 - x[:config['n_summary_per_batch'], :], [config['n_summary_per_batch'], B, A]), perm=[1, 0, 2])
+tf.summary.image('reference', tf.reshape(sx, [1, B, config['n_summary_per_batch'] * A, 1]), max_outputs=1)  # [1, B, A, 1]
+
 # # LOSS FUNCTION ## 
 
 
@@ -291,13 +296,20 @@ def binary_crossentropy(t, o):
     return -(t * tf.log(o + config['eps']) + (1.0 - t) * tf.log(1.0 - o + config['eps']))
 
 
+anchor_point = int(T / 2)
 # reconstruction term appears to have been collapsed down to a single scalar value (rather than one per item in minibatch)
 x_recons = tf.nn.tanh(cs[-1])
+x_recons_anchor = tf.nn.tanh(cs[anchor_point])
 
 # after computing binary cross entropy, sum across features then take the mean of those sums across minibatches
-Lx = tf.reduce_sum(binary_crossentropy(x, x_recons), 1)  # reconstruction term
-Lx = tf.reduce_mean(Lx)
-tf.summary.scalar('Reconstruction Loss', Lx)
+Lx_end = tf.reduce_sum(binary_crossentropy(x, x_recons), 1)  # reconstruction term
+Lx_end = tf.reduce_mean(Lx_end)
+Lx_anchor = tf.reduce_sum(binary_crossentropy(tf.multiply(x, x_recons_anchor), x_recons_anchor), 1)  # reconstruction term
+Lx_anchor = tf.reduce_mean(Lx_anchor)
+Lx = Lx_end  # + 0.2 * Lx_anchor
+tf.summary.scalar('Reconstruction Loss at anchor', Lx_anchor)
+tf.summary.scalar('Reconstruction Loss at end', Lx_end)
+tf.summary.scalar('Total Reconstruction Loss', Lx)
 
 kl_terms = [0] * T
 for t in range(T):
