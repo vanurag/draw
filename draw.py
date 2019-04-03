@@ -28,70 +28,43 @@ A = config['A']
 B = config['B']
 T = config['T']
 
-# # MODEL PARAMETERS ##
-
-# # MNIST
-# A, B = 28, 28  # image width,height
-# img_size = B * A  # the canvas size
-# enc_size = 256  # number of hidden units / output size in LSTM
-# dec_size = 256
-# read_n = 3  # read glimpse grid width/height
-# write_n = 1  # write glimpse grid width/height
-# write_radius = 3
-# read_size = 2 * read_n * read_n if FLAGS.read_attn else 2 * img_size
-# write_size = write_n * write_n if FLAGS.write_attn else img_size
-# z_size = 100  # QSampler output size
-# T = 64  # MNIST generation sequence length
-# batch_size = 100  # training minibatch size
-# train_iters = 10000
-# learning_rate = 1e-3  # learning rate for optimizer
-# eps = 1e-8  # epsilon for numerical stability
-# draw_with_white = True;  # draw with white ink or black ink
-
-# # ETH
-# A, B = 64, 64  # image width,height
-# img_size = B * A  # the canvas size
-# enc_size = 400  # number of hidden units / output size in LSTM
-# dec_size = 400
-# read_n = 7  # read glimpse grid width/height
-# write_n = 1  # write glimpse grid width/height
-# write_radius = 4
-# read_size = 2 * read_n * read_n if FLAGS.read_attn else 2 * img_size
-# write_size = write_n * write_n if FLAGS.write_attn else img_size
-# z_size = 200  # QSampler output size
-# T = 150  # MNIST generation sequence length
-# batch_size = 100  # training minibatch size
-# train_iters = 10000
-# learning_rate = 1e-3  # learning rate for optimizer
-# eps = 1e-8  # epsilon for numerical stability
-# draw_with_white = False;  # draw with white ink or black ink
-
-# # DEBUG
-# A, B = 4, 4  # image width,height
-# img_size = B * A  # the canvas size
-# enc_size = 5  # number of hidden units / output size in LSTM
-# dec_size = 5
-# read_n = 3  # read glimpse grid width/height
-# write_n = 1  # write glimpse grid width/height
-# write_radius = 2
-# read_size = 2 * read_n * read_n if FLAGS.read_attn else 2 * img_size
-# write_size = write_n * write_n if FLAGS.write_attn else img_size
-# z_size = 5  # QSampler output size
-# T = 5  # MNIST generation sequence length
-# batch_size = 100  # training minibatch size
-# train_iters = 500
-# learning_rate = 1e-3  # learning rate for optimizer
-# eps = 1e-8  # epsilon for numerical stability
-# draw_with_white = False;  # draw with white ink or black ink
-
 # # BUILD MODEL ## 
 
 DO_SHARE = None  # workaround for variable_scope(reuse=True)
 
 x = tf.placeholder(tf.float32, shape=(config['batch_size'], config['img_size']))  # input (batch_size * img_size)
 e = tf.random_normal((config['batch_size'], config['z_size']), mean=0, stddev=1)  # Qsampler noise
-lstm_enc = tf.contrib.rnn.LSTMCell(config['enc_size'], state_is_tuple=True)  # encoder Op
-lstm_dec = tf.contrib.rnn.LSTMCell(config['dec_size'], state_is_tuple=True)  # decoder Op
+
+
+def get_lstm_cell(rnn_mode, hidden_size):
+  if rnn_mode == "BASIC":
+    return tf.contrib.rnn.BasicLSTMCell(
+        hidden_size, forget_bias=0.0, state_is_tuple=True, reuse=DO_SHARE)
+  if rnn_mode == "BLOCK":
+    return tf.contrib.rnn.LSTMBlockCell(
+        hidden_size, forget_bias=0.0, reuse=DO_SHARE)
+  if rnn_mode == "GRU":
+    return tf.contrib.rnn.GRUBlockCellV2(
+        hidden_size, reuse=DO_SHARE)
+  raise ValueError("rnn_mode %s not supported" % rnn_mode)
+
+# def make_rnn_cell(l):
+#   cell = get_lstm_cell()
+#   if self.is_training and self.keep_prob < 1 and l not in self.config['no_dropout_ids']:
+#     cell = tf.contrib.rnn.DropoutWrapper(
+#         cell, output_keep_prob=self.keep_prob)
+#           if self.use_residual:
+#             cell = tf.contrib.rnn.ResidualWrapper(cell)
+#   return cell
+
+
+lstm_enc = tf.contrib.rnn.MultiRNNCell(
+  [get_lstm_cell(config['enc_rnn_mode'], config['enc_size']) for l in range(config['n_enc_layers'])], state_is_tuple=True)  # encoder Op
+lstm_dec = tf.contrib.rnn.MultiRNNCell(
+  [get_lstm_cell(config['dec_rnn_mode'], config['dec_size']) for l in range(config['n_dec_layers'])], state_is_tuple=True)  # encoder Op
+          
+# lstm_enc = tf.contrib.rnn.LSTMCell(config['enc_size'], state_is_tuple=True)  # encoder Op
+# lstm_dec = tf.contrib.rnn.LSTMCell(config['dec_size'], state_is_tuple=True)  # decoder Op
 
 
 def export_config(config, output_file):
@@ -304,7 +277,8 @@ x_recons_anchor = tf.nn.tanh(cs[anchor_point])
 # after computing binary cross entropy, sum across features then take the mean of those sums across minibatches
 Lx_end = tf.reduce_sum(binary_crossentropy(x, x_recons), 1)  # reconstruction term
 Lx_end = tf.reduce_mean(Lx_end)
-Lx_anchor = tf.reduce_sum(binary_crossentropy(tf.multiply(x, x_recons_anchor), x_recons_anchor), 1)  # reconstruction term
+# Lx_anchor = tf.reduce_sum(binary_crossentropy(tf.multiply(x, x_recons_anchor), x_recons_anchor), 1)  # reconstruction term
+Lx_anchor = tf.reduce_sum(binary_crossentropy(x, x_recons_anchor), 1)  # reconstruction term
 Lx_anchor = tf.reduce_mean(Lx_anchor)
 Lx = Lx_end  # + 0.2 * Lx_anchor
 tf.summary.scalar('Reconstruction Loss at anchor', Lx_anchor)
@@ -321,17 +295,37 @@ KL = tf.add_n(kl_terms)  # this is 1xminibatch, corresponding to summing kl_term
 Lz = tf.reduce_mean(KL)  # average over minibatches
 tf.summary.scalar('Latent Loss', Lz)
 
-cost = Lx + Lz
+cost = Lx + 0.1 * Lz
 tf.summary.scalar('Total Loss', cost)
 
 # # OPTIMIZER ## 
+
+global_step = tf.Variable(1, name='global_step', trainable=False)
+
+# configure learning rate
+if config['learning_rate_type'] == 'exponential':
+  lr = tf.train.exponential_decay(config['learning_rate'],
+                                  global_step=global_step,
+                                  decay_steps=config['learning_rate_decay_steps'],
+                                  decay_rate=config['learning_rate_decay_rate'],
+                                  staircase=False)
+  lr_decay_op = tf.identity(lr)
+elif config['learning_rate_type'] == 'linear':
+  lr = tf.Variable(config['learning_rate'], trainable=False)
+  lr_decay_op = lr.assign(tf.multiply(lr, config['learning_rate_decay_rate']))
+elif config['learning_rate_type'] == 'fixed':
+  lr = config['learning_rate']
+  lr_decay_op = tf.identity(lr)
+else:
+  raise ValueError('learning rate type "{}" unknown.'.format(config['learning_rate_type']))
+tf.summary.scalar('learning_rate', lr)
 
 optimizer = tf.train.AdamOptimizer(config['learning_rate'], beta1=0.5)
 grads = optimizer.compute_gradients(cost)
 for i, (g, v) in enumerate(grads):
     if g is not None:
         grads[i] = (tf.clip_by_norm(g, 5), v)  # clip gradients
-train_op = optimizer.apply_gradients(grads)
+train_op = optimizer.apply_gradients(grads, global_step=global_step)
 
 # # RUN TRAINING ## 
 
@@ -372,6 +366,7 @@ next_training_batch = train_dataset_iterator.get_next()
 
 Lxs = [0] * config['train_iters']
 Lzs = [0] * config['train_iters']
+costs = [0] * config['train_iters']
 sess = tf.InteractiveSession()
 
 timestamp = str(int(time.time()))
@@ -387,22 +382,32 @@ tf.global_variables_initializer().run()
 # saver.restore(sess, "/tmp/draw/drawmodel.ckpt") # to restore from model, uncomment this line
 
 # # Training
+lowest_test_loss = 1.0e6
+last_saved_epoch = 0  # epoch corresponding to last saved chkpnt
 train_fetches = []
 test_fetches = []
-train_fetches.extend([merged_summaries, Lx, Lz, train_op])
-test_fetches.extend([merged_summaries, Lx, Lz])
+train_fetches.extend([merged_summaries, Lx, Lz, cost, train_op])
+test_fetches.extend([merged_summaries, Lx, Lz, cost])
 for i in range(config['train_iters']):
+	step = tf.train.global_step(sess, global_step)
+	if config['learning_rate_type'] == 'linear' and i % config['learning_rate_decay_steps'] == 0:
+		sess.run(lr_decay_op)
 	xnext = sess.run(next_training_batch)
 	feed_dict = {x:xnext}
 	if i % 100 == 0:
 		xlog = xnext
-		summary, Lxs[i], Lzs[i] = sess.run(test_fetches, feed_dict)
-		print("iter=%d : Lx: %f Lz: %f" % (i, Lxs[i], Lzs[i]))
-		test_writer.add_summary(summary, i)
+		summary, Lxs[i], Lzs[i], costs[i] = sess.run(test_fetches, feed_dict)
+		print("iter=%d : Lx: %f Lz: %f cost: %f" % (i, Lxs[i], Lzs[i], costs[i]))
+		test_writer.add_summary(summary, global_step=step)
+		# save this checkpoint if necessary
+		if (i - last_saved_epoch + 1) >= config['save_checkpoints_every_epoch'] and costs[i] < lowest_test_loss:
+			last_saved_epoch = i
+			lowest_test_loss = costs[i]
+			saver.save(sess, os.path.join(config['log_dir'], 'drawmodel'), i)
 	else:
-		summary, Lxs[i], Lzs[i], _ = sess.run(train_fetches, feed_dict)
+		summary, Lxs[i], Lzs[i], _, _ = sess.run(train_fetches, feed_dict)
 		if i % 100 == 1:
-			train_writer.add_summary(summary, i)
+			train_writer.add_summary(summary, global_step=step)
 
 # # TRAINING FINISHED ## 
 
