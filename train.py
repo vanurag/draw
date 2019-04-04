@@ -122,7 +122,7 @@ def main(config):
       lr_decay_op = tf.identity(lr)
     else:
       raise ValueError('learning rate type "{}" unknown.'.format(config['learning_rate_type']))
-    tf.summary.scalar('learning_rate', lr)
+    tf.summary.scalar('learning_rate', lr, collections=draw_model.summary_collection)
     
     # Optimizer
     params = tf.trainable_variables()
@@ -130,9 +130,14 @@ def main(config):
 #         optimizer = tf.train.GradientDescentOptimizer(lr)
     optimizer = tf.train.AdamOptimizer(learning_rate=lr, beta1=0.5)
     # clip gradients
-    grads, _ = tf.clip_by_global_norm(tf.gradients(draw_model.loss, params), 5)
-    train_op = optimizer.apply_gradients(
-      zip(grads, params), global_step=global_step)
+    grads = optimizer.compute_gradients(draw_model.loss)
+    for i, (g, v) in enumerate(grads):
+      if g is not None:
+        grads[i] = (tf.clip_by_norm(g, 5), v)  # clip gradients
+    train_op = optimizer.apply_gradients(grads, global_step=global_step)
+#     grads, _ = tf.clip_by_global_norm(tf.gradients(draw_model.loss, params), 5)
+#     train_op = optimizer.apply_gradients(
+#       zip(grads, params), global_step=global_step)
     print('Finished Building train optimizer')
 
   print('Building valid graph')

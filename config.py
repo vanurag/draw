@@ -31,18 +31,18 @@ train_config['B'] = 32  # image height
 train_config['img_size'] = train_config['B'] * train_config['A']  # the canvas size
 train_config['draw_with_white'] = False  # draw with white ink or black ink
 
-train_config['enc_rnn_mode'] = 'BASIC'  # The low level implementation of lstm cell. choose between "BASIC", "BLOCK" and "GRU"
-train_config['enc_size'] = 400  # number of hidden units / output size in LSTM layer
-train_config['n_enc_layers'] = 1  # number of layers in encoder LSTM
-train_config['dec_rnn_mode'] = 'BASIC'  # The low level implementation of lstm cell. choose between "BASIC", "BLOCK" and "GRU"
-train_config['dec_size'] = 400
-train_config['n_dec_layers'] = 1  # number of layers in decoder LSTM
+train_config['enc_rnn_mode'] = 'BLOCK'  # The low level implementation of lstm cell. choose between "BASIC", "BLOCK" and "GRU"
+train_config['enc_size'] = 300  # number of hidden units / output size in LSTM layer
+train_config['n_enc_layers'] = 2  # number of layers in encoder LSTM
+train_config['dec_rnn_mode'] = 'BLOCK'  # The low level implementation of lstm cell. choose between "BASIC", "BLOCK" and "GRU"
+train_config['dec_size'] = 300
+train_config['n_dec_layers'] = 2  # number of layers in decoder LSTM
 train_config['z_size'] = 200  # QSampler output size
 train_config['T'] = 100  # MNIST generation sequence length
 
 train_config['read_n'] = int(0.2 * max(train_config['A'], train_config['B']))  # read glimpse grid width/height
 train_config['write_n'] = 1  # write glimpse grid width/height
-train_config['write_radius'] = 0.125 * max(train_config['A'], train_config['B'])
+train_config['write_radius'] = 4  # 0.125 * max(train_config['A'], train_config['B'])
 train_config['read_attn'] = True
 train_config['read_size'] = 2 * train_config['read_n'] * train_config['read_n'] if train_config['read_attn'] else 2 * train_config['img_size']
 train_config['write_attn'] = True
@@ -56,7 +56,7 @@ train_config['learning_rate'] = 1e-3  # learning rate for optimizer
 train_config['learning_rate_type'] = 'linear'  # ['fixed', 'exponential', 'linear']
 train_config['learning_rate_decay_steps'] = 3000
 train_config['learning_rate_decay_rate'] = 0.1
-train_config['eps'] = 1e-8  # epsilon for numerical stability
+train_config['eps'] = 1e-4  # epsilon for numerical stability
 
 # # DEBUG
 # A, B = 4, 4  # image width,height
@@ -81,5 +81,5 @@ train_config['eps'] = 1e-8  # epsilon for numerical stability
 test_config = train_config.copy()
 test_config['batch_size'] = 1
 test_config['n_summary_per_batch'] = 1
-test_config['model_dir'] = '/media/anurag/DATA-EXT/texture-synthesis/texture-datasets/ETH_Synthesizability/logs/DRAW_1554314172/'  # TODO path to the model that you want to evaluate
+test_config['model_dir'] = '/media/anurag/DATA-EXT/texture-synthesis/texture-datasets/ETH_Synthesizability/logs/DRAW_1554388280/'  # TODO path to the model that you want to evaluate
 test_config['checkpoint_id'] = None  # if None, the last checkpoint will be used

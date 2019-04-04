@@ -76,11 +76,11 @@ class DrawModel(object):
       
   def get_lstm_cell(self, rnn_mode, hidden_size):
     if rnn_mode == "BASIC":
-      return tf.contrib.rnn.BasicLSTMCell(
-          hidden_size, forget_bias=0.0, state_is_tuple=True, reuse=self.DO_SHARE)
+      return tf.contrib.rnn.LSTMCell(
+          hidden_size, state_is_tuple=True, reuse=self.DO_SHARE)
     if rnn_mode == "BLOCK":
       return tf.contrib.rnn.LSTMBlockCell(
-          hidden_size, forget_bias=0.0, reuse=self.DO_SHARE)
+          hidden_size, reuse=self.DO_SHARE)
     if rnn_mode == "GRU":
       return tf.contrib.rnn.GRUBlockCellV2(
           hidden_size, reuse=self.DO_SHARE)
