@@ -17,7 +17,6 @@ import sys
 import math
 import time
 from config import config
-from mercurial.hg import addbranchrevs
 
 tf.flags.DEFINE_string("data_dir", "", "")
 tf.flags.DEFINE_string("log_dir", "", "")

@@ -1,62 +1,62 @@
-config = {}
+train_config = {}
 
 # # MODEL PARAMETERS ##
 
 # # MNIST
-# config['A'] = 28  # image width
-# config['B'] = 28  # image height
-# config['img_size'] = config['B'] * config['A']  # the canvas size
-# config['enc_size'] = 256  # number of hidden units / output size in LSTM
-# config['dec_size'] = 256
-# config['read_n'] = 3  # read glimpse grid width/height
-# config['write_n'] = 1  # write glimpse grid width/height
-# config['write_radius'] = 3
-# config['read_attn'] = True
-# config['read_size'] = 2 * config['read_n'] * config['read_n'] if config['read_attn'] else 2 * config['img_size']
-# config['write_attn'] = True
-# config['write_size'] = config['write_n'] * config['write_n'] if config['write_attn'] else config['img_size']
-# config['z_size'] = 100  # QSampler output size
-# config['T'] = 64  # MNIST generation sequence length
-# config['batch_size'] = 100  # training minibatch size
-# config['n_summary_per_batch'] = 10  # number of images summarized per batch
-# config['train_iters'] = 10000
-# config['save_checkpoints_every_epoch'] = int(0.05 * config['train_iters']) # save chpnt after atleast these many epochs
-# config['learning_rate'] = 1e-3  # learning rate for optimizer
-# config['eps'] = 1e-8  # epsilon for numerical stability
-# config['draw_with_white'] = True;  # draw with white ink or black ink
+# train_config['A'] = 28  # image width
+# train_config['B'] = 28  # image height
+# train_config['img_size'] = train_config['B'] * train_config['A']  # the canvas size
+# train_config['enc_size'] = 256  # number of hidden units / output size in LSTM
+# train_config['dec_size'] = 256
+# train_config['read_n'] = 3  # read glimpse grid width/height
+# train_config['write_n'] = 1  # write glimpse grid width/height
+# train_config['write_radius'] = 3
+# train_config['read_attn'] = True
+# train_config['read_size'] = 2 * train_config['read_n'] * train_config['read_n'] if train_config['read_attn'] else 2 * train_config['img_size']
+# train_config['write_attn'] = True
+# train_config['write_size'] = train_config['write_n'] * train_config['write_n'] if train_config['write_attn'] else train_config['img_size']
+# train_config['z_size'] = 100  # QSampler output size
+# train_config['T'] = 64  # MNIST generation sequence length
+# train_config['batch_size'] = 100  # training minibatch size
+# train_config['n_summary_per_batch'] = 10  # number of images summarized per batch
+# train_config['train_iters'] = 10000
+# train_config['save_checkpoints_every_epoch'] = int(0.05 * train_config['train_iters']) # save chpnt after atleast these many epochs
+# train_config['learning_rate'] = 1e-3  # learning rate for optimizer
+# train_config['eps'] = 1e-8  # epsilon for numerical stability
+# train_config['draw_with_white'] = True  # draw with white ink or black ink
 
 # # ETH
-config['A'] = 32  # image width
-config['B'] = 32  # image height
-config['img_size'] = config['B'] * config['A']  # the canvas size
-config['draw_with_white'] = False;  # draw with white ink or black ink
+train_config['A'] = 32  # image width
+train_config['B'] = 32  # image height
+train_config['img_size'] = train_config['B'] * train_config['A']  # the canvas size
+train_config['draw_with_white'] = False  # draw with white ink or black ink
 
-config['enc_rnn_mode'] = 'BASIC'  # The low level implementation of lstm cell. choose between "BASIC", "BLOCK" and "GRU"
-config['enc_size'] = 400  # number of hidden units / output size in LSTM layer
-config['n_enc_layers'] = 1  # number of layers in encoder LSTM
-config['dec_rnn_mode'] = 'BASIC'  # The low level implementation of lstm cell. choose between "BASIC", "BLOCK" and "GRU"
-config['dec_size'] = 400
-config['n_dec_layers'] = 1  # number of layers in decoder LSTM
-config['z_size'] = 200  # QSampler output size
-config['T'] = 100  # MNIST generation sequence length
+train_config['enc_rnn_mode'] = 'BASIC'  # The low level implementation of lstm cell. choose between "BASIC", "BLOCK" and "GRU"
+train_config['enc_size'] = 400  # number of hidden units / output size in LSTM layer
+train_config['n_enc_layers'] = 1  # number of layers in encoder LSTM
+train_config['dec_rnn_mode'] = 'BASIC'  # The low level implementation of lstm cell. choose between "BASIC", "BLOCK" and "GRU"
+train_config['dec_size'] = 400
+train_config['n_dec_layers'] = 1  # number of layers in decoder LSTM
+train_config['z_size'] = 200  # QSampler output size
+train_config['T'] = 100  # MNIST generation sequence length
 
-config['read_n'] = int(0.2 * max(config['A'], config['B']))  # read glimpse grid width/height
-config['write_n'] = 1  # write glimpse grid width/height
-config['write_radius'] = 0.125 * max(config['A'], config['B'])
-config['read_attn'] = True
-config['read_size'] = 2 * config['read_n'] * config['read_n'] if config['read_attn'] else 2 * config['img_size']
-config['write_attn'] = True
-config['write_size'] = config['write_n'] * config['write_n'] if config['write_attn'] else config['img_size']
+train_config['read_n'] = int(0.2 * max(train_config['A'], train_config['B']))  # read glimpse grid width/height
+train_config['write_n'] = 1  # write glimpse grid width/height
+train_config['write_radius'] = 0.125 * max(train_config['A'], train_config['B'])
+train_config['read_attn'] = True
+train_config['read_size'] = 2 * train_config['read_n'] * train_config['read_n'] if train_config['read_attn'] else 2 * train_config['img_size']
+train_config['write_attn'] = True
+train_config['write_size'] = train_config['write_n'] * train_config['write_n'] if train_config['write_attn'] else train_config['img_size']
 
-config['batch_size'] = 100  # training minibatch size
-config['n_summary_per_batch'] = 10
-config['train_iters'] = 10000
-config['save_checkpoints_every_epoch'] = int(0.05 * config['train_iters'])  # save chpnt after atleast these many epochs
-config['learning_rate'] = 1e-3  # learning rate for optimizer
-config['learning_rate_type'] = 'linear'  # ['fixed', 'exponential', 'linear']
-config['learning_rate_decay_steps'] = 3000
-config['learning_rate_decay_rate'] = 0.1
-config['eps'] = 1e-8  # epsilon for numerical stability
+train_config['batch_size'] = 100  # training minibatch size
+train_config['n_summary_per_batch'] = 10
+train_config['train_iters'] = 10000
+train_config['save_checkpoints_every_epoch'] = int(0.05 * train_config['train_iters'])  # save chpnt after atleast these many epochs
+train_config['learning_rate'] = 1e-3  # learning rate for optimizer
+train_config['learning_rate_type'] = 'linear'  # ['fixed', 'exponential', 'linear']
+train_config['learning_rate_decay_steps'] = 3000
+train_config['learning_rate_decay_rate'] = 0.1
+train_config['eps'] = 1e-8  # epsilon for numerical stability
 
 # # DEBUG
 # A, B = 4, 4  # image width,height
@@ -71,9 +71,15 @@ config['eps'] = 1e-8  # epsilon for numerical stability
 # z_size = 5  # QSampler output size
 # T = 5  # MNIST generation sequence length
 # batch_size = 100  # training minibatch size
-# config['n_summary_per_batch'] = 10
+# train_config['n_summary_per_batch'] = 10
 # train_iters = 500
-# config['save_checkpoints_every_epoch'] = 300 # save chpnt after atleast these many epochs
+# train_config['save_checkpoints_every_epoch'] = 300 # save chpnt after atleast these many epochs
 # learning_rate = 1e-3  # learning rate for optimizer
 # eps = 1e-8  # epsilon for numerical stability
-# draw_with_white = False;  # draw with white ink or black ink
+# draw_with_white = False  # draw with white ink or black ink
+
+test_config = train_config.copy()
+test_config['batch_size'] = 1
+test_config['n_summary_per_batch'] = 1
+test_config['model_dir'] = '/media/anurag/DATA-EXT/texture-synthesis/texture-datasets/ETH_Synthesizability/logs/DRAW_1554314172/'  # TODO path to the model that you want to evaluate
+test_config['checkpoint_id'] = None  # if None, the last checkpoint will be used
