@@ -19,7 +19,7 @@ class DrawModel(object):
     self.config = config
     self.input_ = placeholders['input_pl']
     self.mode = mode
-    self.DO_SHARE = self.mode == 'validation'
+    self.DO_SHARE = True if self.mode == 'validation' else None
     self.A = config['A']  # image width
     self.B = config['B']  # image height
     self.img_size = config['img_size']  # the canvas size
@@ -44,21 +44,30 @@ class DrawModel(object):
     
     self.batch_size = config['batch_size']  # training minibatch size
     self.n_summary_per_batch = config['n_summary_per_batch'] 
-    self.train_iters = config['train_iters'] 
-    self.save_checkpoints_every_epoch = config['save_checkpoints_every_epoch']  # save chpnt after atleast these many epochs
-    self.learning_rate = config['learning_rate']  # learning rate for optimizer
-    self.learning_rate_type = config['learning_rate_type']  # ['fixed', 'exponential', 'linear']
-    self.learning_rate_decay_steps = config['learning_rate_decay_steps']
-    self.learning_rate_decay_rate = config['learning_rate_decay_rate']
+#     self.train_iters = config['train_iters'] 
+#     self.save_checkpoints_every_epoch = config['save_checkpoints_every_epoch']  # save chpnt after atleast these many epochs
+#     self.learning_rate = config['learning_rate']  # learning rate for optimizer
+#     self.learning_rate_type = config['learning_rate_type']  # ['fixed', 'exponential', 'linear']
+#     self.learning_rate_decay_steps = config['learning_rate_decay_steps']
+#     self.learning_rate_decay_rate = config['learning_rate_decay_rate']
     self.eps = config['eps']  # epsilon for numerical stability
 
     self.summary_collection = 'training_summaries' if mode == 'training' else 'validation_summaries'
     
     self.e = tf.random_normal((config['batch_size'], config['z_size']), mean=0, stddev=1)  # Qsampler noise
-    self.lstm_enc = tf.contrib.rnn.MultiRNNCell(
-      [self.get_lstm_cell(self.enc_rnn_mode, self.enc_size) for l in range(self.n_enc_layers)], state_is_tuple=True)  # encoder Op
-    self.lstm_dec = tf.contrib.rnn.MultiRNNCell(
-      [self.get_lstm_cell(self.dec_rnn_mode, self.dec_size) for l in range(self.n_dec_layers)], state_is_tuple=True)  # encoder Op
+    
+    # encoder Op
+    if self.n_enc_layers > 1:
+      self.lstm_enc = tf.contrib.rnn.MultiRNNCell(
+        [self.get_lstm_cell(self.enc_rnn_mode, self.enc_size) for l in range(self.n_enc_layers)], state_is_tuple=True)
+    else:
+      self.lstm_enc = self.get_lstm_cell(self.enc_rnn_mode, self.enc_size)
+    # Decoder Op
+    if self.n_dec_layers > 1:
+      self.lstm_dec = tf.contrib.rnn.MultiRNNCell(
+        [self.get_lstm_cell(self.dec_rnn_mode, self.dec_size) for l in range(self.n_dec_layers)], state_is_tuple=True)
+    else:
+      self.lstm_dec = self.get_lstm_cell(self.dec_rnn_mode, self.dec_size)
     
     # # STATE VARIABLES ## 
     self.cs = [0] * self.T  # sequence of canvases
@@ -77,7 +86,7 @@ class DrawModel(object):
   def get_lstm_cell(self, rnn_mode, hidden_size):
     if rnn_mode == "BASIC":
       return tf.contrib.rnn.LSTMCell(
-          hidden_size, state_is_tuple=True, reuse=self.DO_SHARE)
+          hidden_size, state_is_tuple=True)
     if rnn_mode == "BLOCK":
       return tf.contrib.rnn.LSTMBlockCell(
           hidden_size, reuse=self.DO_SHARE)
@@ -216,7 +225,7 @@ class DrawModel(object):
     """
     Builds the actual model.
     """
-    with tf.variable_scope('draw_model', reuse=self.DO_SHARE):
+    with tf.variable_scope('draw_model'):  # , reuse=self.DO_SHARE):
       scs = [0] * self.T  # summary canvases
       # initial states
       h_dec_prev = tf.zeros((self.batch_size, self.dec_size))

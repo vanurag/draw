@@ -90,7 +90,7 @@ def main(config):
   export_config(config, os.path.join(config['model_dir'], 'config.txt'))
   
   # load the data
-  _, next_data_batch = load_data(config, FLAGS.data_dir)
+  n_train_samples, next_data_batch = load_data(config, FLAGS.data_dir)
 
   # get input placeholders and get the model that we want to train
   draw_model_class, placeholders = get_model_and_placeholders(config)
@@ -122,7 +122,6 @@ def main(config):
       lr_decay_op = tf.identity(lr)
     else:
       raise ValueError('learning rate type "{}" unknown.'.format(config['learning_rate_type']))
-    tf.summary.scalar('learning_rate', lr, collections=draw_model.summary_collection)
     
     # Optimizer
     params = tf.trainable_variables()
@@ -145,6 +144,9 @@ def main(config):
     draw_model_valid = draw_model_class(config, placeholders, mode='validation')
     draw_model_valid.build_graph()
     print('Finished Building valid graphs')
+    
+  # Summary ops
+  tf.summary.scalar('learning_rate', lr, collections=[draw_model.summary_collection])
       
   with tf.Session() as sess:
     # Add the ops to initialize variables.
@@ -164,6 +166,7 @@ def main(config):
     # start training
     lowest_test_loss = 1.0e6
     last_saved_epoch = 0  # epoch corresponding to last saved chkpnt
+    config['train_iters'] = config['n_epochs'] * n_train_samples / config['batch_size']
     for i in range(config['train_iters']):
       step = tf.train.global_step(sess, global_step)
       if config['learning_rate_type'] == 'linear' and i % config['learning_rate_decay_steps'] == 0:
@@ -182,13 +185,14 @@ def main(config):
         # For saving plot data
         xlog = xnext
         cost = valid_out['loss']
-        print("iter=%d : Lx: %f Lz: %f cost: %f" % (i, valid_out['reconstruction_loss'], valid_out['latent_loss'], cost))
+        epoch = int(round(i * config['batch_size'] / n_train_samples))
+        print("epoch=%d, iter=%d : Lx: %f Lz: %f cost: %f" % (epoch, i, valid_out['reconstruction_loss'], valid_out['latent_loss'], cost))
         valid_writer.add_summary(valid_out['summaries'], global_step=step)
         # save this checkpoint if necessary
-        if (i - last_saved_epoch + 1) >= config['save_checkpoints_every_epoch'] and cost < lowest_test_loss:
-          last_saved_epoch = i
+        if (epoch - last_saved_epoch + 1) >= config['save_checkpoints_every_epoch'] and cost < lowest_test_loss:
+          last_saved_epoch = epoch
           lowest_test_loss = cost
-          saver.save(sess, os.path.join(config['model_dir'], 'drawmodel'), i)
+          saver.save(sess, os.path.join(config['model_dir'], 'drawmodel'), epoch)
       else:
         train_feed_dict = draw_model.get_feed_dict(xnext)
         train_fetches = {'summaries': training_summaries,

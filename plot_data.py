@@ -77,7 +77,7 @@ def xrecons_grid(X, rBB, wBB, B, A, draw_with_white):
 if __name__ == '__main__':
 	prefix = sys.argv[1]
 	out_file = sys.argv[2]
-	[In, C, rBBs, wBBs, Lxs, Lzs, draw_with_white] = np.load(out_file)
+	[In, C, rBBs, wBBs, draw_with_white] = np.load(out_file)
 	T, batch_size, img_size = C.shape
 # 	X = 1.0 / (1.0 + np.exp(-C))  # x_recons=sigmoid(canvas)
 	X = (np.exp(2 * C) - 1) / (np.exp(2 * C) + 1)  # x_recons=tanh(canvas)
@@ -109,12 +109,3 @@ if __name__ == '__main__':
 		imgname = '%s_result.png' % (prefix)
 		plt.savefig(imgname)
 		print(imgname)
-	f = plt.figure()
-	plt.plot(Lxs, label='Reconstruction Loss Lx')
-	plt.plot(Lzs, label='Latent Loss Lz')
-	plt.xlabel('iterations')
-	plt.legend()
-	if interactive:
-		plt.show()
-	else:
-		plt.savefig('%s_loss.png' % (prefix))
