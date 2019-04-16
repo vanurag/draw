@@ -54,28 +54,45 @@ def load_data(config, data_dir):
       return image_flipped
     return image_flattened
 
-  data_directory = data_dir
-  if not os.path.exists(data_directory):
+  texture_directory = os.path.join(data_dir, 'full')
+  canvas_directory = os.path.join(data_dir, '50-percent')
+  if not os.path.exists(texture_directory) or not os.path.exists(canvas_directory):
     print("Train data not found")
     sys.exit()
-  data_files = tf.gfile.ListDirectory(data_directory)
-  print('Loading dataset with {} images'.format(len(data_files)))
-  idx = np.arange(len(data_files))
+  texture_files = tf.gfile.ListDirectory(texture_directory)
+#   texture_files = texture_files[:10000]
+  canvas_files = tf.gfile.ListDirectory(canvas_directory)
+#   canvas_files = canvas_files[:10000]
+  if len(texture_files) != len(canvas_files):
+    print("Texture and canvas directories need to have same number of images, with one-to-one correspondence")
+    sys.exit() 
+  print('Loading dataset with {} images'.format(len(texture_files)))
+  idx = np.arange(len(texture_files))
   np.random.shuffle(idx)
-  data_filenames = [os.path.join(data_directory, data_files[i]) for i in idx]
-  # data_filenames = data_filenames[:1000]  # DEBUG
-  dataset = tf.data.Dataset.from_tensor_slices(data_filenames)
-  dataset = dataset.map(_parse_function)
-  train_dataset = dataset.repeat().batch(config['batch_size'])
-  train_dataset_iterator = train_dataset.make_one_shot_iterator()
-  next_training_batch = train_dataset_iterator.get_next()
-  return len(data_files), next_training_batch
+  texture_filenames = [os.path.join(texture_directory, texture_files[i]) for i in idx]
+  canvas_filenames = [os.path.join(canvas_directory, canvas_files[i]) for i in idx]
+  
+  texture_dataset = tf.data.Dataset.from_tensor_slices(texture_filenames)
+  texture_dataset = texture_dataset.map(_parse_function)
+  texture_dataset = texture_dataset.repeat().batch(config['batch_size'])
+  texture_dataset_iterator = texture_dataset.make_one_shot_iterator()
+  next_texture_training_batch = texture_dataset_iterator.get_next()
+  
+  canvas_dataset = tf.data.Dataset.from_tensor_slices(canvas_filenames)
+  canvas_dataset = canvas_dataset.map(_parse_function)
+  canvas_dataset = canvas_dataset.repeat().batch(config['batch_size'])
+  canvas_dataset_iterator = canvas_dataset.make_one_shot_iterator()
+  next_canvas_training_batch = canvas_dataset_iterator.get_next()
+  
+  return len(texture_files), next_texture_training_batch, next_canvas_training_batch
 
 
 def get_model_and_placeholders(config):
     # create placeholders that we need to feed the required data into the model
     input_pl = tf.placeholder(tf.float32, shape=(config['batch_size'], config['img_size']))
-    placeholders = {'input_pl': input_pl}
+    canvas_pl = tf.placeholder(tf.float32, shape=(config['batch_size'], config['img_size']))
+    placeholders = {'input_pl': input_pl,
+                    'canvas_pl': canvas_pl}
     return DrawModel, placeholders
 
 
@@ -90,7 +107,7 @@ def main(config):
   export_config(config, os.path.join(config['model_dir'], 'config.txt'))
   
   # load the data
-  n_train_samples, next_data_batch = load_data(config, FLAGS.data_dir)
+  n_train_samples, next_data_batch, next_canvas_batch = load_data(config, FLAGS.data_dir)
 
   # get input placeholders and get the model that we want to train
   draw_model_class, placeholders = get_model_and_placeholders(config)
@@ -124,7 +141,7 @@ def main(config):
       raise ValueError('learning rate type "{}" unknown.'.format(config['learning_rate_type']))
     
     # Optimizer
-    params = tf.trainable_variables()
+#     params = tf.trainable_variables()
     print('Building train optimizer')
 #         optimizer = tf.train.GradientDescentOptimizer(lr)
     optimizer = tf.train.AdamOptimizer(learning_rate=lr, beta1=0.5)
@@ -164,29 +181,39 @@ def main(config):
     saver = tf.train.Saver(var_list=tf.trainable_variables(), max_to_keep=50)
 
     # start training
+    draw_T = config['T']
     lowest_test_loss = 1.0e6
     last_saved_epoch = 0  # epoch corresponding to last saved chkpnt
     config['train_iters'] = config['n_epochs'] * n_train_samples / config['batch_size']
     for i in range(config['train_iters']):
+      epoch = int(round(i * config['batch_size'] / n_train_samples))
       step = tf.train.global_step(sess, global_step)
-      if config['learning_rate_type'] == 'linear' and i % config['learning_rate_decay_steps'] == 0:
+      if config['learning_rate_type'] != 'fixed' and i > 0 and i % config['learning_rate_decay_steps'] == 0:
         sess.run(lr_decay_op)
         
       xnext = sess.run(next_data_batch)
+      cnext = sess.run(next_canvas_batch)
+      if epoch >= int(round(config['n_epochs'] / 2.0)):
+        cnext = np.zeros([config['batch_size'], config['img_size']])
+        draw_T = config['T']
+      else:
+        draw_T = int(round(config['T'] / 2.0))
       
       # Validate every 100th iteration
       if i % 100 == 0:
-        valid_feed_dict = draw_model_valid.get_feed_dict(xnext)
+        valid_feed_dict = draw_model_valid.get_feed_dict(xnext, cnext)
+        valid_feed_dict[draw_model_valid.T] = draw_T
         valid_fetches = {'summaries': valid_summaries,
                          'reconstruction_loss': draw_model_valid.Lx,
                          'latent_loss': draw_model_valid.Lz,
+                         'movement_loss': draw_model_valid.Lmove,
                          'loss': draw_model_valid.loss}
         valid_out = sess.run(valid_fetches, valid_feed_dict)
         # For saving plot data
         xlog = xnext
         cost = valid_out['loss']
-        epoch = int(round(i * config['batch_size'] / n_train_samples))
-        print("epoch=%d, iter=%d : Lx: %f Lz: %f cost: %f" % (epoch, i, valid_out['reconstruction_loss'], valid_out['latent_loss'], cost))
+        print("epoch=%d, iter=%d : Lx: %f Lz: %f Lmove: %f cost: %f" % \
+              (epoch, i, valid_out['reconstruction_loss'], valid_out['latent_loss'], valid_out['movement_loss'], cost))
         valid_writer.add_summary(valid_out['summaries'], global_step=step)
         # save this checkpoint if necessary
         if (epoch - last_saved_epoch + 1) >= config['save_checkpoints_every_epoch'] and cost < lowest_test_loss:
@@ -194,7 +221,8 @@ def main(config):
           lowest_test_loss = cost
           saver.save(sess, os.path.join(config['model_dir'], 'drawmodel'), epoch)
       else:
-        train_feed_dict = draw_model.get_feed_dict(xnext)
+        train_feed_dict = draw_model.get_feed_dict(xnext, cnext)
+        train_feed_dict[draw_model.T] = draw_T
         train_fetches = {'summaries': training_summaries,
                          'train_op': train_op}
         train_out = sess.run(train_fetches, train_feed_dict)
@@ -204,7 +232,8 @@ def main(config):
     print('Training finished.')
 
     # # Logging + Visualization
-    log_fetches = {'canvases': draw_model_valid.cs, 'read_bbs': draw_model_valid.read_bb, 'write_bbs': draw_model_valid.write_bb}
+    log_fetches = {'canvases': draw_model_valid.cs.stack(), 'read_bbs': draw_model_valid.read_bb.stack(), \
+                   'write_bbs': draw_model_valid.write_bb.stack()}
     log_out = sess.run(log_fetches, valid_feed_dict)  # generate some examples
     canvases = np.array(log_out['canvases'])  # T x batch x img_size
     read_bounding_boxes = np.array(log_out['read_bbs'])  # T x batch x 3
