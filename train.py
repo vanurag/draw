@@ -54,37 +54,24 @@ def load_data(config, data_dir):
       return image_flipped
     return image_flattened
 
-  texture_directory = os.path.join(data_dir, 'full')
-  canvas_directory = os.path.join(data_dir, '50-percent')
-  if not os.path.exists(texture_directory) or not os.path.exists(canvas_directory):
+  train_directory = data_dir
+  if not os.path.exists(train_directory):
     print("Train data not found")
     sys.exit()
-  texture_files = tf.gfile.ListDirectory(texture_directory)
-#   texture_files = texture_files[:10000]
-  canvas_files = tf.gfile.ListDirectory(canvas_directory)
-#   canvas_files = canvas_files[:10000]
-  if len(texture_files) != len(canvas_files):
-    print("Texture and canvas directories need to have same number of images, with one-to-one correspondence")
-    sys.exit() 
-  print('Loading dataset with {} images'.format(len(texture_files)))
-  idx = np.arange(len(texture_files))
+  train_files = tf.gfile.ListDirectory(train_directory)
+#   train_files = train_files[:10000]
+  print('Loading dataset with {} images'.format(len(train_files)))
+  idx = np.arange(len(train_files))
   np.random.shuffle(idx)
-  texture_filenames = [os.path.join(texture_directory, texture_files[i]) for i in idx]
-  canvas_filenames = [os.path.join(canvas_directory, canvas_files[i]) for i in idx]
+  train_filenames = [os.path.join(train_directory, train_files[i]) for i in idx]
   
-  texture_dataset = tf.data.Dataset.from_tensor_slices(texture_filenames)
-  texture_dataset = texture_dataset.map(_parse_function)
-  texture_dataset = texture_dataset.repeat().batch(config['batch_size'])
-  texture_dataset_iterator = texture_dataset.make_one_shot_iterator()
-  next_texture_training_batch = texture_dataset_iterator.get_next()
+  train_dataset = tf.data.Dataset.from_tensor_slices(train_filenames)
+  train_dataset = train_dataset.map(_parse_function)
+  train_dataset = train_dataset.repeat().batch(config['batch_size'])
+  train_dataset_iterator = train_dataset.make_one_shot_iterator()
+  next_training_batch = train_dataset_iterator.get_next()
   
-  canvas_dataset = tf.data.Dataset.from_tensor_slices(canvas_filenames)
-  canvas_dataset = canvas_dataset.map(_parse_function)
-  canvas_dataset = canvas_dataset.repeat().batch(config['batch_size'])
-  canvas_dataset_iterator = canvas_dataset.make_one_shot_iterator()
-  next_canvas_training_batch = canvas_dataset_iterator.get_next()
-  
-  return len(texture_files), next_texture_training_batch, next_canvas_training_batch
+  return len(train_files), next_training_batch
 
 
 def get_model_and_placeholders(config):
@@ -107,7 +94,7 @@ def main(config):
   export_config(config, os.path.join(config['model_dir'], 'config.txt'))
   
   # load the data
-  n_train_samples, next_data_batch, next_canvas_batch = load_data(config, FLAGS.data_dir)
+  n_train_samples, next_data_batch = load_data(config, FLAGS.data_dir)
 
   # get input placeholders and get the model that we want to train
   draw_model_class, placeholders = get_model_and_placeholders(config)
@@ -192,12 +179,22 @@ def main(config):
         sess.run(lr_decay_op)
         
       xnext = sess.run(next_data_batch)
-      cnext = sess.run(next_canvas_batch)
-      if epoch >= int(round(config['n_epochs'] / 2.0)):
-        cnext = np.zeros([config['batch_size'], config['img_size']])
-        draw_T = config['T']
-      else:
-        draw_T = int(round(config['T'] / 2.0))
+
+      # Hot start
+      if config['use_hot_start']:
+        crop_fraction = (epoch + 1) * config['crop_fraction_increase_rate']
+        if crop_fraction >= 1.0:
+          cnext = np.zeros([config['batch_size'], config['img_size']])
+          draw_T = config['T']
+        else:
+          xnext_reshaped = np.copy(xnext)
+          xnext_reshaped = xnext_reshaped.reshape((config['batch_size'], config['B'], config['A']))
+          start_row = np.random.randint(config['B'] * (1 - crop_fraction))  # , size=config['batch_size'])
+          start_col = np.random.randint(config['A'] * (1 - crop_fraction))  # , size=config['batch_size'])
+          xnext_reshaped[:, start_row:start_row + int(crop_fraction * config['B']), \
+                         start_col:start_col + int(crop_fraction * config['A'])] = 0.0
+          cnext = np.reshape(xnext_reshaped, (config['batch_size'], config['img_size']))
+          draw_T = max(1, int(config['T'] * crop_fraction))
       
       # Validate every 100th iteration
       if i % 100 == 0:

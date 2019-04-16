@@ -33,6 +33,9 @@ train_config = {}
 # train_config['learning_rate_type'] = 'fixed'  # ['fixed', 'exponential', 'linear']
 # train_config['learning_rate_decay_steps'] = 3000
 # train_config['learning_rate_decay_rate'] = 0.1
+# HOTSTART: Initialize canvas as cropped input image
+# train_config['use_hot_start'] = False
+# train_config['crop_fraction_increase_rate'] = 0.2  # rate at which cropped part is grown each epoch
 # train_config['eps'] = 1e-8  # epsilon for numerical stability
 
 # # ETH
@@ -61,11 +64,14 @@ train_config['write_size'] = train_config['write_n'] * train_config['write_n'] i
 train_config['batch_size'] = 100  # training minibatch size
 train_config['n_summary_per_batch'] = 10
 train_config['n_epochs'] = 10  # number of times the entire dataset is processed during training
-train_config['save_checkpoints_every_epoch'] = 3  # save chpnt after atleast these many epochs
+train_config['save_checkpoints_every_epoch'] = 1  # save chpnt after atleast these many epochs
 train_config['learning_rate'] = 1e-3  # learning rate for optimizer
 train_config['learning_rate_type'] = 'fixed'  # ['fixed', 'exponential', 'linear']
 train_config['learning_rate_decay_steps'] = 5000
 train_config['learning_rate_decay_rate'] = 0.01
+# HOTSTART: Initialize canvas as cropped input image
+train_config['use_hot_start'] = True
+train_config['crop_fraction_increase_rate'] = 0.2  # rate at which cropped part is grown each epoch
 train_config['eps'] = 1e-8  # epsilon for numerical stability
 
 # # DEBUG
@@ -99,6 +105,9 @@ train_config['eps'] = 1e-8  # epsilon for numerical stability
 # train_config['learning_rate_type'] = 'fixed'  # ['fixed', 'exponential', 'linear']
 # train_config['learning_rate_decay_steps'] = 5000
 # train_config['learning_rate_decay_rate'] = 0.1
+# HOTSTART: Initialize canvas as cropped input image
+# train_config['use_hot_start'] = True
+# train_config['crop_fraction_increase_rate'] = 0.5  # rate at which cropped part is grown each epoch
 # train_config['eps'] = 1e-8  # epsilon for numerical stability
 
 test_config = train_config.copy()
