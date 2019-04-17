@@ -346,7 +346,7 @@ class DrawModel(object):
           kl_term = 0.5 * tf.reduce_sum(mu2 + sigma2 - 2 * logsigma, 1) - scaling_factor * .5  # each kl term is (1xminibatch)
           return [scaling_factor, tf.add(t, 1), mus, sigmas, logsigmas, tf.add(KL, kl_term)]
 
-        scaling_factor = tf.constant(1.0 / self.config['T'])
+        scaling_factor = 1.0 / tf.cast(self.T, tf.float32)  # tf.constant(1.0 / self.config['T'])
         t = tf.constant(0)
         KL = tf.zeros([self.batch_size])
         scaling_factor, t, self.mus, self.sigmas, self.logsigmas, KL = \
