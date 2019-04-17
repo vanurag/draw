@@ -70,9 +70,10 @@ def main(config):
           L_ref = get_next_layer(residual, config['write_radius'])
         ideal_end_result = ideal_end_result + L_ref
         xref = np.reshape(L_ref, (1, config['img_size']))
+        cref = np.zeros([config['batch_size'], config['img_size']])
         
-        feed_dict = draw_model.get_feed_dict(xref)
-        fetches = {'canvases': draw_model.cs, 'read_bbs': draw_model.read_bb, 'write_bbs': draw_model.write_bb}
+        feed_dict = draw_model.get_feed_dict(xref, cref)
+        fetches = {'canvases': draw_model.cs.stack(), 'read_bbs': draw_model.read_bb.stack(), 'write_bbs': draw_model.write_bb.stack()}
         test_out = sess.run(fetches, feed_dict)
         # results
         canvases = np.concatenate(test_out['canvases'])  # T x img_size

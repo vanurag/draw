@@ -49,10 +49,10 @@ def load_data(config, data_dir):
     image_converted = tf.image.convert_image_dtype(image_gray, tf.float32)
     image_resized = tf.image.resize_images(image_converted, [config['A'], config['B']])
     image_flattened = tf.reshape(image_resized, [-1])
+    return_image = image_flattened
     if not config['draw_with_white']:
-      image_flipped = 1.0 - image_flattened
-      return image_flipped
-    return image_flattened
+      return_image = 1.0 - image_flattened
+    return return_image
 
   train_directory = data_dir
   if not os.path.exists(train_directory):
@@ -169,7 +169,7 @@ def main(config):
 
     # start training
     draw_T = config['T']
-    lowest_test_loss = 1.0e6
+#     lowest_test_loss = 1.0e6
     last_saved_epoch = 0  # epoch corresponding to last saved chkpnt
     config['train_iters'] = config['n_epochs'] * n_train_samples / config['batch_size']
     for i in range(config['train_iters']):
@@ -213,9 +213,9 @@ def main(config):
               (epoch, i, valid_out['reconstruction_loss'], valid_out['latent_loss'], valid_out['movement_loss'], cost))
         valid_writer.add_summary(valid_out['summaries'], global_step=step)
         # save this checkpoint if necessary
-        if (epoch - last_saved_epoch + 1) >= config['save_checkpoints_every_epoch'] and cost < lowest_test_loss:
+        if (epoch - last_saved_epoch + 1) >= config['save_checkpoints_every_epoch']:  # and cost < lowest_test_loss:
           last_saved_epoch = epoch
-          lowest_test_loss = cost
+#           lowest_test_loss = cost
           saver.save(sess, os.path.join(config['model_dir'], 'drawmodel'), epoch)
       else:
         train_feed_dict = draw_model.get_feed_dict(xnext, cnext)
