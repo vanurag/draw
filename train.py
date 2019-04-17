@@ -52,6 +52,7 @@ def load_data(config, data_dir):
     return_image = image_flattened
     if not config['draw_with_white']:
       return_image = 1.0 - image_flattened
+    return_image = tf.clip_by_value(return_image, 0.0, 0.99)  # for numeric stability during arctanh() operation
     return return_image
 
   train_directory = data_dir
