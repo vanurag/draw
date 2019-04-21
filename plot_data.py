@@ -4,6 +4,7 @@
 import matplotlib
 import sys
 import numpy as np
+from numpy import dtype
 
 interactive = False  # set to False if you want to write images to file
 
@@ -44,6 +45,8 @@ def xrecons_grid(X, rBB, wBB, B, A, draw_with_white):
 
 			# Reading bounding box
 			if rBB is not None:
+				if np.isnan(rBB[i, j, 0]):
+					continue
 				BB_startr = rBB[i, j, 1].astype(int) - (rBB[i, j, 2] / 2).astype(int)
 				BB_startr = max(0, min(BB_startr, B))
 				BB_endr = rBB[i, j, 1].astype(int) + (rBB[i, j, 2] / 2).astype(int)
@@ -59,6 +62,8 @@ def xrecons_grid(X, rBB, wBB, B, A, draw_with_white):
 			
 			# Writing bounding box
 			if wBB is not None:
+				if np.isnan(wBB[i, j, 0]):
+					continue
 				BB_startr = wBB[i, j, 1].astype(int) - (wBB[i, j, 2] / 2).astype(int)
 				BB_startr = max(0, min(BB_startr, B))
 				BB_endr = wBB[i, j, 1].astype(int) + (wBB[i, j, 2] / 2).astype(int)
@@ -77,16 +82,25 @@ def xrecons_grid(X, rBB, wBB, B, A, draw_with_white):
 if __name__ == '__main__':
 	prefix = sys.argv[1]
 	out_file = sys.argv[2]
-	[In, C, rBBs, wBBs, draw_with_white] = np.load(out_file)
+	[In, C, rBBs, wBBs, wTs, draw_with_white] = np.load(out_file)
 	T, batch_size, img_size = C.shape
 # 	X = 1.0 / (1.0 + np.exp(-C))  # x_recons=sigmoid(canvas)
 	X = (np.exp(2 * C) - 1) / (np.exp(2 * C) + 1)  # x_recons=tanh(canvas)
+	C_final = C[wTs - 1, np.arange(batch_size), :]
+	X_final = (np.exp(2 * C_final) - 1) / (np.exp(2 * C_final) + 1)  # x_recons=tanh(canvas)
 	B = A = int(np.sqrt(img_size))
 	input_img = xrecons_grid(In, None, None, B, A, draw_with_white)
 	if interactive:
 		f, arr = plt.subplots(2, T)
 	for t in range(T):
-		img = xrecons_grid(X[t, :, :], rBBs[t, :, :], wBBs[t, :, :], B, A, draw_with_white)
+		X_plot = np.empty(shape=(0, img_size), dtype=np.float32)
+		rBB_plot = np.empty(shape=(0, 3), dtype=np.float32)
+		wBB_plot = np.empty(shape=(0, 3), dtype=np.float32)
+		for b in range(batch_size):
+			X_plot = np.vstack((X_plot, X[t, b, :] if t < wTs[b] else X_final[b, :]))
+			rBB_plot = np.vstack((rBB_plot, rBBs[t, b, :] if t < wTs[b] else np.array([np.nan, np.nan, np.nan])))
+			wBB_plot = np.vstack((wBB_plot, wBBs[t, b, :] if t < wTs[b] else np.array([np.nan, np.nan, np.nan])))
+		img = xrecons_grid(X_plot, rBB_plot, wBB_plot, B, A, draw_with_white)
 		if interactive:
 			arr[0, t].imshow(input_img, vmin=0, vmax=1)
 			arr[1, t].imshow(img, vmin=0, vmax=1)
@@ -104,7 +118,7 @@ if __name__ == '__main__':
 		imgname = '%s_ref.png' % (prefix)
 		plt.savefig(imgname)
 		print(imgname)
-		res_img = xrecons_grid(X[-1, :, :], None, None, B, A, draw_with_white)
+		res_img = xrecons_grid(X_final, None, None, B, A, draw_with_white)
 		plt.imshow(res_img, vmin=0, vmax=1)
 		imgname = '%s_result.png' % (prefix)
 		plt.savefig(imgname)

@@ -176,7 +176,7 @@ def main(config):
     for i in range(config['train_iters']):
       epoch = int(round(i * config['batch_size'] / n_train_samples))
       step = tf.train.global_step(sess, global_step)
-      if config['learning_rate_type'] != 'fixed' and i > 0 and i % config['learning_rate_decay_steps'] == 0:
+      if config['learning_rate_type'] != 'fixed' and epoch > 0 and epoch % config['learning_rate_decay_epochs'] == 0:
         sess.run(lr_decay_op)
         
       xnext = sess.run(next_data_batch)
@@ -196,6 +196,9 @@ def main(config):
                          start_col:start_col + int(crop_fraction * config['A'])] = 0.0
           cnext = np.reshape(xnext_reshaped, (config['batch_size'], config['img_size']))
           draw_T = max(1, int(config['T'] * crop_fraction))
+      else:
+        cnext = np.zeros([config['batch_size'], config['img_size']])
+        draw_T = config['T']
       
       # Validate every 100th iteration
       if i % 100 == 0:
@@ -204,14 +207,16 @@ def main(config):
         valid_fetches = {'summaries': valid_summaries,
                          'reconstruction_loss': draw_model_valid.Lx,
                          'latent_loss': draw_model_valid.Lz,
+                         'write_loss': draw_model_valid.Lwrite,
                          'movement_loss': draw_model_valid.Lmove,
                          'loss': draw_model_valid.loss}
         valid_out = sess.run(valid_fetches, valid_feed_dict)
         # For saving plot data
         xlog = xnext
         cost = valid_out['loss']
-        print("epoch=%d, iter=%d : Lx: %f Lz: %f Lmove: %f cost: %f" % \
-              (epoch, i, valid_out['reconstruction_loss'], valid_out['latent_loss'], valid_out['movement_loss'], cost))
+        print("epoch=%d, iter=%d : Lx: %f Lz: %f Lwrite: %f Lmove: %f cost: %f" % \
+              (epoch, i, valid_out['reconstruction_loss'], valid_out['latent_loss'], valid_out['write_loss'],
+               valid_out['movement_loss'], cost))
         valid_writer.add_summary(valid_out['summaries'], global_step=step)
         # save this checkpoint if necessary
         if (epoch - last_saved_epoch + 1) >= config['save_checkpoints_every_epoch']:  # and cost < lowest_test_loss:
@@ -231,14 +236,15 @@ def main(config):
 
     # # Logging + Visualization
     log_fetches = {'canvases': draw_model_valid.cs.stack(), 'read_bbs': draw_model_valid.read_bb.stack(), \
-                   'write_bbs': draw_model_valid.write_bb.stack()}
+                   'write_bbs': draw_model_valid.write_bb.stack(), 'write_times': draw_model_valid.stop_times}
     log_out = sess.run(log_fetches, valid_feed_dict)  # generate some examples
     canvases = np.array(log_out['canvases'])  # T x batch x img_size
     read_bounding_boxes = np.array(log_out['read_bbs'])  # T x batch x 3
     write_bounding_boxes = np.array(log_out['write_bbs'])  # T x batch x 3
+    write_times = np.array(log_out['write_times'])  # batch
     
     log_file = os.path.join(config['model_dir'], "draw_data.npy")
-    np.save(log_file, [xlog, canvases, read_bounding_boxes, write_bounding_boxes, config['draw_with_white']])
+    np.save(log_file, [xlog, canvases, read_bounding_boxes, write_bounding_boxes, write_times, config['draw_with_white']])
     print("Visualization outputs saved in file: %s" % log_file)
     
     ckpt_file = os.path.join(config['model_dir'], "drawmodel.ckpt")
