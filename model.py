@@ -47,7 +47,7 @@ class DrawModel(object):
     self.use_write_attn = config['write_attn']
     self.write_size = config['write_size']
     self.write_decision_temperature = 1.0 
-    self.stop_writing_threshold = 10.0  # 0.99
+    self.stop_writing_threshold = config['stop_writing_threshold']  # 0.99
     self.write_decision_prior_log_odds = -2.0
     
     self.batch_size = config['batch_size']  # training minibatch size
@@ -400,13 +400,14 @@ class DrawModel(object):
           KL = tf.add(KL, tf.where(tf.less(t, stop_times), kl_term, tf.zeros(self.batch_size)))
           return [scaling_factor, tf.add(t, 1), stop_times, mus, sigmas, logsigmas, KL]
 
-        scaling_factor = 1.0 / tf.cast(self.T, tf.float32)  # tf.constant(1.0 / self.config['T'])
+        scaling_factor = tf.constant(1.0)  # 1.0 / tf.cast(self.T, tf.float32)  # tf.constant(1.0 / self.config['T'])
         t = tf.constant(0)
         KL = tf.zeros([self.batch_size])
         scaling_factor, t, self.stop_times, self.mus, self.sigmas, self.logsigmas, KL = \
           tf.while_loop(lambda s, t, *_: tf.less(t, self.T), _latent_loss_loop_body,
                         [scaling_factor, t, self.stop_times, self.mus, self.sigmas, self.logsigmas, KL],
                         parallel_iterations=1)
+        KL = tf.divide(KL, tf.cast(self.stop_times, dtype=tf.float32))
         self.Lz = tf.reduce_mean(KL)  # average over minibatches
         tf.summary.scalar('Latent Loss', self.Lz, collections=[self.summary_collection])
         
