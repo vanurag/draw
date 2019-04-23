@@ -102,21 +102,6 @@ def main(config):
     cnext = np.zeros([config['batch_size'], config['img_size']])
     
     test_feed_dict = draw_model.get_feed_dict(xtest, cnext)
-#     test_feed_dict[draw_model.T] = draw_T
-#     test_fetches = {'reconstruction_loss': draw_model.Lx,
-#                     'latent_loss': draw_model.Lz,
-#                     'write_loss': draw_model.Lwrite,
-#                     'movement_loss': draw_model.Lmove,
-#                     'loss': draw_model.loss}
-#     test_out = sess.run(test_fetches, test_feed_dict)
-#     
-#     # For saving plot data
-#     cost = test_out['loss']
-#     print("Lx: %f Lz: %f Lwrite: %f Lmove: %f cost: %f" % \
-#           (test_out['reconstruction_loss'], test_out['latent_loss'], test_out['write_loss'],
-#            test_out['movement_loss'], cost))
-#     
-#     print('Testing finished.')
 
     # # Logging + Visualization
     log_fetches = {'canvases': draw_model.cs.stack(), 'read_bbs': draw_model.read_bb.stack(), \

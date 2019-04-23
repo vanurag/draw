@@ -294,7 +294,7 @@ class DrawModel(object):
     sw, sw_log_odd, sw_pre_sigmoid = self.write_decision(h_dec)
     should_write_log_odds.write(t, sw_log_odd)
     should_write_pre_sigmoid.write(t, sw_pre_sigmoid)
-    stop_sum += 1.0 - tf.reshape(sw, [-1])
+    stop_sum += 1.0 - tf.reshape(sw, [self.batch_size])
     if self.draw_with_white:
       scs = scs.write(t, tf.transpose(\
         tf.reshape(cs.read(t)[:self.n_summary_per_batch, :], \

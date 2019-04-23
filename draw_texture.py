@@ -73,14 +73,16 @@ def main(config):
         cref = np.zeros([config['batch_size'], config['img_size']])
         
         feed_dict = draw_model.get_feed_dict(xref, cref)
-        fetches = {'canvases': draw_model.cs.stack(), 'read_bbs': draw_model.read_bb.stack(), 'write_bbs': draw_model.write_bb.stack()}
+        fetches = {'canvases': draw_model.cs.stack(), 'read_bbs': draw_model.read_bb.stack(),
+                   'write_bbs': draw_model.write_bb.stack(), 'write_times': draw_model.stop_times}
         test_out = sess.run(fetches, feed_dict)
         # results
         canvases = np.concatenate(test_out['canvases'])  # T x img_size
         read_bounding_boxes = np.concatenate(test_out['read_bbs'])  # T x 3
         write_bounding_boxes = np.concatenate(test_out['write_bbs'])  # T x 3
+        write_times = test_out['write_times']
         
-        draw_result = np.reshape(canvases[-1, :], (config['B'], config['A']))
+        draw_result = np.reshape(canvases[write_times - 1, :], (config['B'], config['A']))
         
         L_ref_viz = 1 - L_ref if not config['draw_with_white'] else L_ref
         draw_result_viz = 1 - draw_result if not config['draw_with_white'] else draw_result
