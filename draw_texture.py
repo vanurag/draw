@@ -3,7 +3,7 @@ import tensorflow as tf
 import numpy as np
 from scipy import ndimage
 
-from config import test_config
+from config import texture_config
 from train import load_data, get_model_and_placeholders
 import matplotlib.pyplot as plt
 
@@ -118,4 +118,4 @@ def main(config):
 
 
 if __name__ == '__main__':
-    main(test_config)
+    main(texture_config)

@@ -115,7 +115,9 @@ train_config['stop_writing_threshold'] = 25.0  # higher the threshold, longer th
 # train_config['stop_writing_threshold'] = 10.0  # higher the threshold, longer the network is allowed to draw
 
 test_config = train_config.copy()
-test_config['batch_size'] = 1
-test_config['n_summary_per_batch'] = 1
-test_config['model_dir'] = '/media/anurag/DATA-EXT/texture-synthesis/texture-datasets/ETH_Synthesizability/logs/DRAW_1555501639/'  # TODO path to the model that you want to evaluate
-test_config['checkpoint_id'] = '6'  # if None, the last checkpoint will be used
+test_config['model_dir'] = '/media/anurag/DATA-EXT/texture-synthesis/texture-datasets/MNIST/logs/DRAW_1555937563/'  # TODO path to the model that you want to evaluate
+test_config['checkpoint_id'] = '29'  # if None, the last checkpoint will be used
+
+texture_config = test_config.copy()
+texture_config['batch_size'] = 1
+texture_config['n_summary_per_batch'] = 1

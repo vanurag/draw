@@ -4,9 +4,9 @@
 Simple implementation of http://arxiv.org/pdf/1502.04623v2.pdf in TensorFlow
 
 Example Usage: 
-  python draw.py --data_dir=/tmp/draw --log_dir=/tmp/draw/logs
+  python train.py --data_dir=<train_data> --log_dir=<log_data_path>
 
-Author: Eric Jang
+Author: Anurag Vempati
 """
 
 import tensorflow as tf
