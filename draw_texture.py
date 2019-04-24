@@ -1,14 +1,64 @@
+""""
+Layer-wise drawing of a given texture
+
+Example Usage: 
+  python draw_texture.py --test_dir=<test_data> --draw_width=64 --draw_height=64
+
+Author: Anurag Vempati
+"""
+
 import os
 import tensorflow as tf
 import numpy as np
+import sys
 from scipy import ndimage
+import time
 
 from config import texture_config
-from train import load_data, get_model_and_placeholders
+from train import get_model_and_placeholders
 import matplotlib.pyplot as plt
 
 tf.flags.DEFINE_string("test_dir", "", "")
+tf.flags.DEFINE_integer("draw_width", 32, "Width of the draw result")
+tf.flags.DEFINE_integer("draw_height", 32, "Height of the draw result")
 FLAGS = tf.flags.FLAGS
+
+
+def load_data(img_width, img_height, flip_image, batch_size, data_dir):
+  print('Loading data from {} ...'.format(data_dir))
+
+  # Reads an image from a file, decodes it into a dense tensor, and resizes it
+  # to a fixed shape.
+  def _parse_function(filename):
+    image_string = tf.read_file(filename)
+    image_gray = tf.image.decode_jpeg(image_string, channels=1)
+    image_converted = tf.image.convert_image_dtype(image_gray, tf.float32)
+    image_resized = tf.image.resize_images(image_converted, [img_width, img_height])
+    image_flattened = tf.reshape(image_resized, [-1])
+    return_image = image_flattened
+    if flip_image:  # not config['draw_with_white']:
+      return_image = 1.0 - image_flattened
+    return_image = tf.clip_by_value(return_image, 0.0, 0.99)  # for numeric stability during arctanh() operation
+    return return_image
+
+  train_directory = data_dir
+  if not os.path.exists(train_directory):
+    print("Train data not found")
+    sys.exit()
+  train_files = tf.gfile.ListDirectory(train_directory)
+#   train_files = train_files[:10000]
+  print('Loading dataset with {} images'.format(len(train_files)))
+  idx = np.arange(len(train_files))
+  np.random.shuffle(idx)
+  train_filenames = [os.path.join(train_directory, train_files[i]) for i in idx]
+  
+  train_dataset = tf.data.Dataset.from_tensor_slices(train_filenames)
+  train_dataset = train_dataset.map(_parse_function)
+  train_dataset = train_dataset.repeat().batch(batch_size)
+  train_dataset_iterator = train_dataset.make_one_shot_iterator()
+  next_training_batch = train_dataset_iterator.get_next()
+  
+  return len(train_files), next_training_batch
 
 
 def get_next_layer(residual, write_radius):
@@ -26,7 +76,8 @@ def get_next_layer(residual, write_radius):
   
 def main(config):
   # Load texture image
-  n_test_textures, next_texture = load_data(config, FLAGS.test_dir)
+  n_test_textures, next_texture = load_data(
+    FLAGS.draw_width, FLAGS.draw_height, not config['draw_with_white'], config['batch_size'], FLAGS.test_dir)
   
   # get input placeholders and get the model that we want to test
   draw_model_class, placeholders = get_model_and_placeholders(config)
@@ -51,8 +102,9 @@ def main(config):
     n_layers = 5
     f, arr = plt.subplots(2 + n_layers, 2 * n_test_textures)
     for t in range(n_test_textures):
+      start_time = time.time()
       xnext = sess.run(next_texture)
-      input_texture = np.reshape(xnext, (config['B'], config['A']))
+      input_texture = np.reshape(xnext, (FLAGS.draw_height, FLAGS.draw_width))
       end_result = np.zeros(input_texture.shape)
       
       # Draw layers
@@ -69,20 +121,28 @@ def main(config):
           # Get next layer
           L_ref = get_next_layer(residual, config['write_radius'])
         ideal_end_result = ideal_end_result + L_ref
-        xref = np.reshape(L_ref, (1, config['img_size']))
-        cref = np.zeros([config['batch_size'], config['img_size']])
         
-        feed_dict = draw_model.get_feed_dict(xref, cref)
-        fetches = {'canvases': draw_model.cs.stack(), 'read_bbs': draw_model.read_bb.stack(),
-                   'write_bbs': draw_model.write_bb.stack(), 'write_times': draw_model.stop_times}
-        test_out = sess.run(fetches, feed_dict)
-        # results
-        canvases = np.concatenate(test_out['canvases'])  # T x img_size
-        read_bounding_boxes = np.concatenate(test_out['read_bbs'])  # T x 3
-        write_bounding_boxes = np.concatenate(test_out['write_bbs'])  # T x 3
-        write_times = test_out['write_times']
-        
-        draw_result = np.reshape(canvases[write_times - 1, :], (config['B'], config['A']))
+        # Get patches of config['B'] x config['A'] size to draw
+        draw_result = np.zeros((FLAGS.draw_height, FLAGS.draw_width))
+        n_patches_a = FLAGS.draw_width / config['A']
+        n_patches_b = FLAGS.draw_height / config['B']
+        for p_b in range(n_patches_b):
+          for p_a in range(n_patches_a):
+            patch_row = config['B'] * p_b
+            patch_col = config['A'] * p_a
+            patch = L_ref[patch_row:patch_row + config['B'], patch_col:patch_col + config['A']]
+            xref = np.reshape(patch, (1, config['img_size']))
+            cref = np.zeros([config['batch_size'], config['img_size']])
+            
+            feed_dict = draw_model.get_feed_dict(xref, cref)
+            fetches = {'canvases': draw_model.cs.stack(), 'write_times': draw_model.stop_times}
+            test_out = sess.run(fetches, feed_dict)
+            # results
+            canvases = np.concatenate(test_out['canvases'])  # T x img_size
+            write_times = test_out['write_times']
+            
+            draw_result[patch_row:patch_row + config['B'], patch_col:patch_col + config['A']] = \
+              np.reshape(canvases[write_times - 1, :], (config['B'], config['A']))
         
         L_ref_viz = 1 - L_ref if not config['draw_with_white'] else L_ref
         draw_result_viz = 1 - draw_result if not config['draw_with_white'] else draw_result
@@ -96,6 +156,8 @@ def main(config):
         residual = residual - draw_result
         end_result = end_result + draw_result
       
+      end_time = time.time()
+      print("Time taken to draw texture #%d: %f" % (t + 1, end_time - start_time))
       input_texture_viz = 1 - input_texture if not config['draw_with_white'] else input_texture
       ideal_end_result_viz = 1 - ideal_end_result if not config['draw_with_white'] else ideal_end_result
       end_result_viz = 1 - end_result if not config['draw_with_white'] else end_result

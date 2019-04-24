@@ -68,8 +68,8 @@ train_config['n_epochs'] = 20  # number of times the entire dataset is processed
 train_config['save_checkpoints_every_epoch'] = 1  # save chpnt after atleast these many epochs
 train_config['learning_rate'] = 1e-4  # learning rate for optimizer
 train_config['learning_rate_type'] = 'fixed'  # ['fixed', 'exponential', 'linear']
-train_config['learning_rate_decay_epochs'] = 8
-train_config['learning_rate_decay_rate'] = 0.01
+train_config['learning_rate_decay_epochs'] = 4
+train_config['learning_rate_decay_rate'] = 0.1
 # HOTSTART: Initialize canvas as cropped input image
 train_config['use_hot_start'] = False
 train_config['crop_fraction_increase_rate'] = 0.25  # rate at which cropped part is grown
@@ -118,6 +118,7 @@ test_config = train_config.copy()
 test_config['model_dir'] = '/media/anurag/DATA-EXT/texture-synthesis/texture-datasets/ETH_Synthesizability/logs/DRAW_1555947943/'  # TODO path to the model that you want to evaluate
 test_config['checkpoint_id'] = '10'  # if None, the last checkpoint will be used
 
+# For layer-wise painting of a texture
 texture_config = test_config.copy()
 texture_config['batch_size'] = 1
 texture_config['n_summary_per_batch'] = 1
