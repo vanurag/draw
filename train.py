@@ -99,60 +99,20 @@ def main(config):
 
   # get input placeholders and get the model that we want to train
   draw_model_class, placeholders = get_model_and_placeholders(config)
-
-  # Create a variable that stores how many training iterations we performed.
-  # This is useful for saving/storing the network
-  global_step = tf.Variable(1, name='global_step', trainable=False)
-
+  
   # create a training graph, this is the graph we will use to optimize the parameters
   print('Building training graph')
   with tf.name_scope('training'):
-    draw_model = draw_model_class(config, placeholders, mode='training')
+    draw_model = draw_model_class(config, placeholders, mode='training', annealing_schedules=config['annealing_schedules'])
     draw_model.build_graph()
     print('created DRAW model with {} parameters'.format(draw_model.n_parameters))
       
-    # configure learning rate
-    if config['learning_rate_type'] == 'exponential':
-      lr = tf.train.exponential_decay(config['learning_rate'],
-                                      global_step=global_step,
-                                      decay_steps=config['learning_rate_decay_steps'],
-                                      decay_rate=config['learning_rate_decay_rate'],
-                                      staircase=False)
-      lr_decay_op = tf.identity(lr)
-    elif config['learning_rate_type'] == 'linear':
-      lr = tf.Variable(config['learning_rate'], trainable=False)
-      lr_decay_op = lr.assign(tf.multiply(lr, config['learning_rate_decay_rate']))
-    elif config['learning_rate_type'] == 'fixed':
-      lr = config['learning_rate']
-      lr_decay_op = tf.identity(lr)
-    else:
-      raise ValueError('learning rate type "{}" unknown.'.format(config['learning_rate_type']))
-    
-    # Optimizer
-#     params = tf.trainable_variables()
-    print('Building train optimizer')
-#         optimizer = tf.train.GradientDescentOptimizer(lr)
-    optimizer = tf.train.AdamOptimizer(learning_rate=lr, beta1=0.5)
-    # clip gradients
-    grads = optimizer.compute_gradients(draw_model.loss)
-    for i, (g, v) in enumerate(grads):
-      if g is not None:
-        grads[i] = (tf.clip_by_norm(g, 5), v)  # clip gradients
-    train_op = optimizer.apply_gradients(grads, global_step=global_step)
-#     grads, _ = tf.clip_by_global_norm(tf.gradients(draw_model.loss, params), 5)
-#     train_op = optimizer.apply_gradients(
-#       zip(grads, params), global_step=global_step)
-    print('Finished Building train optimizer')
-
   print('Building valid graph')
   with tf.name_scope('validation'):
-    draw_model_valid = draw_model_class(config, placeholders, mode='validation')
+    draw_model_valid = draw_model_class(config, placeholders, mode='validation', annealing_schedules=config['annealing_schedules'])
     draw_model_valid.build_graph()
     print('Finished Building valid graphs')
     
-  # Summary ops
-  tf.summary.scalar('learning_rate', lr, collections=[draw_model.summary_collection])
-      
   with tf.Session() as sess:
     # Add the ops to initialize variables.
     init_op = tf.group(tf.global_variables_initializer(), tf.local_variables_initializer())
@@ -175,10 +135,9 @@ def main(config):
     config['train_iters'] = config['n_epochs'] * n_train_samples / config['batch_size']
     for i in range(config['train_iters']):
       epoch = int(round(i * config['batch_size'] / n_train_samples))
-      step = tf.train.global_step(sess, global_step)
-      if config['learning_rate_type'] != 'fixed' and epoch > 0 and epoch % config['learning_rate_decay_epochs'] == 0:
-        sess.run(lr_decay_op)
+      step = tf.train.global_step(sess, draw_model.global_step)
         
+      # Next data batch
       xnext = sess.run(next_data_batch)
 
       # Hot start
@@ -199,24 +158,25 @@ def main(config):
       else:
         cnext = np.zeros([config['batch_size'], config['img_size']])
         draw_T = config['T']
-      
+        
       # Validate every 100th iteration
       if i % 100 == 0:
         valid_feed_dict = draw_model_valid.get_feed_dict(xnext, cnext)
         valid_feed_dict[draw_model_valid.T] = draw_T
+        valid_feed_dict[draw_model_valid.global_step] = step
         valid_fetches = {'summaries': valid_summaries,
                          'reconstruction_loss': draw_model_valid.Lx,
                          'latent_loss': draw_model_valid.Lz,
                          'write_loss': draw_model_valid.Lwrite,
+                         'intensity_change_loss': draw_model_valid.Lintensity,
                          'movement_loss': draw_model_valid.Lmove,
                          'loss': draw_model_valid.loss}
         valid_out = sess.run(valid_fetches, valid_feed_dict)
         # For saving plot data
         xlog = xnext
         cost = valid_out['loss']
-        print("epoch=%d, iter=%d : Lx: %f Lz: %f Lwrite: %f Lmove: %f cost: %f" % \
-              (epoch, i, valid_out['reconstruction_loss'], valid_out['latent_loss'], valid_out['write_loss'],
-               valid_out['movement_loss'], cost))
+        print("epoch=%d, iter=%d : Lx: %f Lz: %f Lwrite: %f cost: %f" % \
+              (epoch, i, valid_out['reconstruction_loss'], valid_out['latent_loss'], valid_out['write_loss'], cost))
         valid_writer.add_summary(valid_out['summaries'], global_step=step)
         # save this checkpoint if necessary
         if (epoch - last_saved_epoch + 1) >= config['save_checkpoints_every_epoch']:  # and cost < lowest_test_loss:
@@ -227,7 +187,7 @@ def main(config):
         train_feed_dict = draw_model.get_feed_dict(xnext, cnext)
         train_feed_dict[draw_model.T] = draw_T
         train_fetches = {'summaries': training_summaries,
-                         'train_op': train_op}
+                         'train_op': draw_model.train_op}
         train_out = sess.run(train_fetches, train_feed_dict)
         if i % 100 == 1:
           train_writer.add_summary(train_out['summaries'], global_step=step)

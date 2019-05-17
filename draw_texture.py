@@ -19,6 +19,7 @@ from train import get_model_and_placeholders
 import matplotlib.pyplot as plt
 
 tf.flags.DEFINE_string("test_dir", "", "")
+tf.flags.DEFINE_string("output_dir", "", "")
 tf.flags.DEFINE_integer("draw_width", 32, "Width of the draw result")
 tf.flags.DEFINE_integer("draw_height", 32, "Height of the draw result")
 FLAGS = tf.flags.FLAGS
@@ -73,11 +74,23 @@ def get_next_layer(residual, write_radius):
   L = ndimage.gaussian_filter(L, sigma=write_radius / 2)
   return L
 
+
+def export_draw_result_to_file(file_handle, write_bbs):
+  for t in range(len(write_bbs)):
+    print >> file_handle, "%4f %4f %4f %4f" % (write_bbs[t, 0], write_bbs[t, 1], write_bbs[t, 2], write_bbs[t, 3])
+  return
+
   
 def main(config):
   # Load texture image
   n_test_textures, next_texture = load_data(
     FLAGS.draw_width, FLAGS.draw_height, not config['draw_with_white'], config['batch_size'], FLAGS.test_dir)
+  
+  # Create output file for exporting result
+  if not os.path.exists(FLAGS.output_dir):
+    print("Output path doesn't exist")
+    sys.exit()
+  output_file = open(os.path.join(FLAGS.output_dir, 'draw_path.txt'), 'w')
   
   # get input placeholders and get the model that we want to test
   draw_model_class, placeholders = get_model_and_placeholders(config)
@@ -135,11 +148,16 @@ def main(config):
             cref = np.zeros([config['batch_size'], config['img_size']])
             
             feed_dict = draw_model.get_feed_dict(xref, cref)
-            fetches = {'canvases': draw_model.cs.stack(), 'write_times': draw_model.stop_times}
+            fetches = {'canvases': draw_model.cs.stack(), 'write_bbs': draw_model.write_bb.stack(),
+                       'write_times': draw_model.stop_times}
             test_out = sess.run(fetches, feed_dict)
             # results
             canvases = np.concatenate(test_out['canvases'])  # T x img_size
+            write_bounding_boxes = np.reshape(np.array(test_out['write_bbs']), (config['T'], 4))  # T x 4
             write_times = test_out['write_times']
+            
+            # export
+            export_draw_result_to_file(output_file, write_bounding_boxes)
             
             draw_result[patch_row:patch_row + config['B'], patch_col:patch_col + config['A']] = \
               np.reshape(canvases[write_times - 1, :], (config['B'], config['A']))
@@ -179,6 +197,7 @@ def main(config):
       arr[1 + n_layers, 2 * t + 1].set_yticks([])
       
     plt.show()
+    output_file.close()
 
 
 if __name__ == '__main__':

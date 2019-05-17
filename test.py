@@ -109,7 +109,7 @@ def main(config):
     log_out = sess.run(log_fetches, test_feed_dict)  # generate some examples
     canvases = np.array(log_out['canvases'])  # T x batch x img_size
     read_bounding_boxes = np.array(log_out['read_bbs'])  # T x batch x 3
-    write_bounding_boxes = np.array(log_out['write_bbs'])  # T x batch x 3
+    write_bounding_boxes = np.array(log_out['write_bbs'])  # T x batch x 4
     write_times = np.array(log_out['write_times'])  # batch
     
     log_file = os.path.join(config['model_dir'], "draw_data.npy")
