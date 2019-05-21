@@ -69,17 +69,15 @@ def load_data(config, data_file):
   
   data_files = tf.data.Dataset.list_files(data_file)
   dataset = data_files.interleave(tf.data.TFRecordDataset, cycle_length=2)
-  dataset = dataset.map(map_func=_parse_function, num_parallel_calls=8)
+  dataset = dataset.map(map_func=_parse_function, num_parallel_calls=4)
   epoch_counter = tf.data.TFRecordDataset.range(config['n_epochs'])
   dataset = epoch_counter.flat_map(lambda i: tf.data.Dataset.zip(
     (dataset, tf.data.Dataset.from_tensors(i).repeat())))
   dataset = dataset.repeat()
-  dataset = dataset.prefetch(buffer_size=config['batch_size'])
   dataset = dataset.batch(config['batch_size'])
+  dataset = dataset.prefetch(buffer_size=config['batch_size'])
   dataset_iterator = dataset.make_one_shot_iterator()
   next_data_batch = dataset_iterator.get_next()
-  
-#   print('Num. data samples:{}'.format(tf.data.experimental.cardinality(dataset)))
   
   return next_data_batch
 
@@ -142,14 +140,17 @@ def main(config):
 #     lowest_test_loss = 1.0e6
     last_saved_epoch = 0  # epoch corresponding to last saved chkpnt
     iteration = 0
+    previous_epoch = 0
     epoch = 0
     with tqdm() as pbar:
       while epoch < config['n_epochs']:
-        step = tf.train.global_step(sess, draw_model.global_step)
-          
         # Next data batch
+        previous_epoch = epoch
         xnext, epoch = sess.run(next_data_batch)
         epoch = epoch[0]
+        if (previous_epoch > 0 and epoch == 0): break
+        
+        step = tf.train.global_step(sess, draw_model.global_step)
   
         # Hot start
         if config['use_hot_start']:
