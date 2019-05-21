@@ -4,7 +4,7 @@
 Simple implementation of http://arxiv.org/pdf/1502.04623v2.pdf in TensorFlow
 
 Example Usage: 
-  python train.py --data_dir=<train_data> --log_dir=<log_data_path>
+  python train.py --data_file=<TFRecord_file_path> --log_dir=<log_data_path>
 
 Author: Anurag Vempati
 """
@@ -15,10 +15,11 @@ import os
 import sys
 import math
 import time
+from tqdm import tqdm
 from config import train_config
 from model import DrawModel
 
-tf.flags.DEFINE_string("data_dir", "", "")
+tf.flags.DEFINE_string("data_file", "", "")
 tf.flags.DEFINE_string("log_dir", "", "")
 FLAGS = tf.flags.FLAGS
 
@@ -38,14 +39,21 @@ def export_config(config, output_file):
           f.write(out_string)
 
           
-def load_data(config, data_dir):
-  print('Loading data from {} ...'.format(data_dir))
+def load_data(config, data_file):
+  print('Loading data from {} ...'.format(data_file))
 
   # Reads an image from a file, decodes it into a dense tensor, and resizes it
   # to a fixed shape.
   def _parse_function(filename):
-    image_string = tf.read_file(filename)
-    image_gray = tf.image.decode_jpeg(image_string, channels=1)
+    data_fmt = {
+      "height": tf.FixedLenFeature((), tf.int64, -1),
+      "width": tf.FixedLenFeature((), tf.int64, -1),
+      "depth": tf.FixedLenFeature((), tf.int64, -1),
+      "image_raw": tf.FixedLenFeature((), tf.string, "")
+    }
+    
+    parsed_data = tf.parse_single_example(filename, data_fmt)
+    image_gray = tf.image.decode_jpeg(parsed_data["image_raw"], channels=1)
     image_converted = tf.image.convert_image_dtype(image_gray, tf.float32)
     image_resized = tf.image.resize_images(image_converted, [config['A'], config['B']])
     image_flattened = tf.reshape(image_resized, [-1])
@@ -55,24 +63,23 @@ def load_data(config, data_dir):
     return_image = tf.clip_by_value(return_image, 0.0, 0.99)  # for numeric stability during arctanh() operation
     return return_image
 
-  train_directory = data_dir
-  if not os.path.exists(train_directory):
-    print("Train data not found")
+  if not os.path.exists(data_file):
+    print("Data TFRecord not found")
     sys.exit()
-  train_files = tf.gfile.ListDirectory(train_directory)
-#   train_files = train_files[:10000]
-  print('Loading dataset with {} images'.format(len(train_files)))
-  idx = np.arange(len(train_files))
-  np.random.shuffle(idx)
-  train_filenames = [os.path.join(train_directory, train_files[i]) for i in idx]
   
-  train_dataset = tf.data.Dataset.from_tensor_slices(train_filenames)
-  train_dataset = train_dataset.map(_parse_function)
-  train_dataset = train_dataset.repeat().batch(config['batch_size'])
-  train_dataset_iterator = train_dataset.make_one_shot_iterator()
-  next_training_batch = train_dataset_iterator.get_next()
+  data_files = tf.data.Dataset.list_files(data_file)
+  dataset = data_files.interleave(tf.data.TFRecordDataset, cycle_length=2)
+  dataset = dataset.map(map_func=_parse_function, num_parallel_calls=4)
+  epoch_counter = tf.data.TFRecordDataset.range(config['n_epochs'])
+  dataset = epoch_counter.flat_map(lambda i: tf.data.Dataset.zip(
+    (dataset, tf.data.Dataset.from_tensors(i).repeat())))
+  dataset = dataset.repeat()
+  dataset = dataset.batch(config['batch_size'])
+  dataset = dataset.prefetch(buffer_size=config['batch_size'])
+  dataset_iterator = dataset.make_one_shot_iterator()
+  next_data_batch = dataset_iterator.get_next()
   
-  return len(train_files), next_training_batch
+  return next_data_batch
 
 
 def get_model_and_placeholders(config):
@@ -95,7 +102,7 @@ def main(config):
   export_config(config, os.path.join(config['model_dir'], 'config.txt'))
   
   # load the data
-  n_train_samples, next_data_batch = load_data(config, FLAGS.data_dir)
+  next_data_batch = load_data(config, FLAGS.data_file)
 
   # get input placeholders and get the model that we want to train
   draw_model_class, placeholders = get_model_and_placeholders(config)
@@ -132,65 +139,73 @@ def main(config):
     draw_T = config['T']
 #     lowest_test_loss = 1.0e6
     last_saved_epoch = 0  # epoch corresponding to last saved chkpnt
-    config['train_iters'] = config['n_epochs'] * n_train_samples / config['batch_size']
-    for i in range(config['train_iters']):
-      epoch = int(round(i * config['batch_size'] / n_train_samples))
-      step = tf.train.global_step(sess, draw_model.global_step)
+    iteration = 0
+    previous_epoch = 0
+    epoch = 0
+    with tqdm() as pbar:
+      while epoch < config['n_epochs']:
+        # Next data batch
+        previous_epoch = epoch
+        xnext, epoch = sess.run(next_data_batch)
+        epoch = epoch[0]
+        if (previous_epoch > 0 and epoch == 0): break
         
-      # Next data batch
-      xnext = sess.run(next_data_batch)
-
-      # Hot start
-      if config['use_hot_start']:
-        crop_fraction = (epoch + 1) * config['crop_fraction_increase_rate']
-        if crop_fraction >= 1.0:
+        step = tf.train.global_step(sess, draw_model.global_step)
+  
+        # Hot start
+        if config['use_hot_start']:
+          crop_fraction = (epoch + 1) * config['crop_fraction_increase_rate']
+          if crop_fraction >= 1.0:
+            cnext = np.zeros([config['batch_size'], config['img_size']])
+            draw_T = config['T']
+          else:
+            xnext_reshaped = np.copy(xnext)
+            xnext_reshaped = xnext_reshaped.reshape((config['batch_size'], config['B'], config['A']))
+            start_row = np.random.randint(config['B'] * (1 - crop_fraction))  # , size=config['batch_size'])
+            start_col = np.random.randint(config['A'] * (1 - crop_fraction))  # , size=config['batch_size'])
+            xnext_reshaped[:, start_row:start_row + int(crop_fraction * config['B']), \
+                           start_col:start_col + int(crop_fraction * config['A'])] = 0.0
+            cnext = np.reshape(xnext_reshaped, (config['batch_size'], config['img_size']))
+            draw_T = max(1, int(config['T'] * crop_fraction))
+        else:
           cnext = np.zeros([config['batch_size'], config['img_size']])
           draw_T = config['T']
+          
+        # Validate every 100th iteration
+        if iteration % 100 == 0:
+          valid_feed_dict = draw_model_valid.get_feed_dict(xnext, cnext)
+          valid_feed_dict[draw_model_valid.T] = draw_T
+          valid_feed_dict[draw_model_valid.global_step] = step
+          valid_fetches = {'summaries': valid_summaries,
+                           'reconstruction_loss': draw_model_valid.Lx,
+                           'latent_loss': draw_model_valid.Lz,
+                           'write_loss': draw_model_valid.Lwrite,
+                           'intensity_change_loss': draw_model_valid.Lintensity,
+                           'movement_loss': draw_model_valid.Lmove,
+                           'loss': draw_model_valid.loss}
+          valid_out = sess.run(valid_fetches, valid_feed_dict)
+          # For saving plot data
+          xlog = xnext
+          cost = valid_out['loss']
+          print("epoch=%d, iter=%d : Lx: %f Lz: %f Lwrite: %f cost: %f" % \
+                (epoch, iteration, valid_out['reconstruction_loss'], valid_out['latent_loss'], valid_out['write_loss'], cost))
+          valid_writer.add_summary(valid_out['summaries'], global_step=step)
+          # save this checkpoint if necessary
+          if (epoch - last_saved_epoch + 1) >= config['save_checkpoints_every_epoch']:  # and cost < lowest_test_loss:
+            last_saved_epoch = epoch
+  #           lowest_test_loss = cost
+            saver.save(sess, os.path.join(config['model_dir'], 'drawmodel'), epoch)
         else:
-          xnext_reshaped = np.copy(xnext)
-          xnext_reshaped = xnext_reshaped.reshape((config['batch_size'], config['B'], config['A']))
-          start_row = np.random.randint(config['B'] * (1 - crop_fraction))  # , size=config['batch_size'])
-          start_col = np.random.randint(config['A'] * (1 - crop_fraction))  # , size=config['batch_size'])
-          xnext_reshaped[:, start_row:start_row + int(crop_fraction * config['B']), \
-                         start_col:start_col + int(crop_fraction * config['A'])] = 0.0
-          cnext = np.reshape(xnext_reshaped, (config['batch_size'], config['img_size']))
-          draw_T = max(1, int(config['T'] * crop_fraction))
-      else:
-        cnext = np.zeros([config['batch_size'], config['img_size']])
-        draw_T = config['T']
-        
-      # Validate every 100th iteration
-      if i % 100 == 0:
-        valid_feed_dict = draw_model_valid.get_feed_dict(xnext, cnext)
-        valid_feed_dict[draw_model_valid.T] = draw_T
-        valid_feed_dict[draw_model_valid.global_step] = step
-        valid_fetches = {'summaries': valid_summaries,
-                         'reconstruction_loss': draw_model_valid.Lx,
-                         'latent_loss': draw_model_valid.Lz,
-                         'write_loss': draw_model_valid.Lwrite,
-                         'intensity_change_loss': draw_model_valid.Lintensity,
-                         'movement_loss': draw_model_valid.Lmove,
-                         'loss': draw_model_valid.loss}
-        valid_out = sess.run(valid_fetches, valid_feed_dict)
-        # For saving plot data
-        xlog = xnext
-        cost = valid_out['loss']
-        print("epoch=%d, iter=%d : Lx: %f Lz: %f Lwrite: %f cost: %f" % \
-              (epoch, i, valid_out['reconstruction_loss'], valid_out['latent_loss'], valid_out['write_loss'], cost))
-        valid_writer.add_summary(valid_out['summaries'], global_step=step)
-        # save this checkpoint if necessary
-        if (epoch - last_saved_epoch + 1) >= config['save_checkpoints_every_epoch']:  # and cost < lowest_test_loss:
-          last_saved_epoch = epoch
-#           lowest_test_loss = cost
-          saver.save(sess, os.path.join(config['model_dir'], 'drawmodel'), epoch)
-      else:
-        train_feed_dict = draw_model.get_feed_dict(xnext, cnext)
-        train_feed_dict[draw_model.T] = draw_T
-        train_fetches = {'summaries': training_summaries,
-                         'train_op': draw_model.train_op}
-        train_out = sess.run(train_fetches, train_feed_dict)
-        if i % 100 == 1:
-          train_writer.add_summary(train_out['summaries'], global_step=step)
+          train_feed_dict = draw_model.get_feed_dict(xnext, cnext)
+          train_feed_dict[draw_model.T] = draw_T
+          train_fetches = {'summaries': training_summaries,
+                           'train_op': draw_model.train_op}
+          train_out = sess.run(train_fetches, train_feed_dict)
+          if iteration % 100 == 1:
+            train_writer.add_summary(train_out['summaries'], global_step=step)
+            
+        iteration += 1
+        pbar.update(1)
     
     print('Training finished.')
 
