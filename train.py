@@ -173,22 +173,29 @@ def main(config):
           
         # Validate every 100th iteration
         if iteration % 100 == 0:
+          # Validate discriminator
+          valid_d_feed_dict = draw_model_valid.get_feed_dict(xnext, cnext)
+          valid_d_feed_dict[draw_model_valid.global_step] = step
+          valid_d_fetches = {'discriminator_loss': draw_model_valid.d_loss}
+          valid_d_out = sess.run(valid_d_fetches, valid_d_feed_dict)
+          # Validate generator
           valid_feed_dict = draw_model_valid.get_feed_dict(xnext, cnext)
           valid_feed_dict[draw_model_valid.T] = draw_T
           valid_feed_dict[draw_model_valid.global_step] = step
           valid_fetches = {'summaries': valid_summaries,
                            'reconstruction_loss': draw_model_valid.Lx,
+                           'generator_loss': draw_model_valid.Lg,
                            'latent_loss': draw_model_valid.Lz,
                            'write_loss': draw_model_valid.Lwrite,
                            'intensity_change_loss': draw_model_valid.Lintensity,
                            'movement_loss': draw_model_valid.Lmove,
                            'loss': draw_model_valid.loss}
           valid_out = sess.run(valid_fetches, valid_feed_dict)
-          # For saving plot data
-          xlog = xnext
+          xlog = xnext  # For saving plot data
           cost = valid_out['loss']
-          print("epoch=%d, iter=%d : Lx: %f Lz: %f Lwrite: %f cost: %f" % \
-                (epoch, iteration, valid_out['reconstruction_loss'], valid_out['latent_loss'], valid_out['write_loss'], cost))
+          print("epoch=%d, iter=%d : Lx: %f Lg: %f Lz: %f Lwrite: %f cost: %f || L_disc: %f" % \
+                (epoch, iteration, valid_out['reconstruction_loss'], valid_out['generator_loss'], \
+                 valid_out['latent_loss'], valid_out['write_loss'], cost, valid_d_out['discriminator_loss']))
           valid_writer.add_summary(valid_out['summaries'], global_step=step)
           # save this checkpoint if necessary
           if (epoch - last_saved_epoch + 1) >= config['save_checkpoints_every_epoch']:  # and cost < lowest_test_loss:
@@ -196,6 +203,13 @@ def main(config):
   #           lowest_test_loss = cost
             saver.save(sess, os.path.join(config['model_dir'], 'drawmodel'), epoch)
         else:
+          # Train discriminator
+          n_d_train_steps = 2
+          for _ in range(n_d_train_steps):
+            train_d_feed_dict = draw_model.get_feed_dict(xnext, cnext)
+            train_d_fetches = {'train_op': draw_model.d_train_op}
+            train_d_out = sess.run(train_d_fetches, train_d_feed_dict)
+          # Train generator
           train_feed_dict = draw_model.get_feed_dict(xnext, cnext)
           train_feed_dict[draw_model.T] = draw_T
           train_fetches = {'summaries': training_summaries,

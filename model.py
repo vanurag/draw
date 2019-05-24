@@ -1,5 +1,7 @@
 import tensorflow as tf
 import math
+from ops import *
+from matplotlib.pyplot import axis
 
 
 class DrawModel(object):
@@ -25,6 +27,7 @@ class DrawModel(object):
     self.B = config['B']  # image height
     self.img_size = config['img_size']  # the canvas size
     self.draw_with_white = config['draw_with_white']  # draw with white ink or black ink
+    self.draw_all_time = config['draw_all_time']  # should draw for all T time steps or end if the result looks close to target
     
     self.enc_rnn_mode = config['enc_rnn_mode']  # The low level implementation of lstm cell. choose between "BASIC", "BLOCK" and "GRU"
     self.enc_size = config['enc_size']  # number of hidden units / output size in LSTM layer
@@ -53,6 +56,16 @@ class DrawModel(object):
       self.stop_writing_threshold = 0.99
     else:
       self.stop_writing_threshold = tf.Variable(0.99, trainable=False)
+    
+    # Discriminator
+    self.y_dim = None
+    self.df_dim = 64  # num filters in first conv layer
+    self.dfc_dim = 1024  # fully connected layer units
+    # batch normalization : deals with poor initialization helps gradient flow
+    self.d_bn = False
+    self.d_bn1 = batch_norm(name='d_bn1')
+    self.d_bn2 = batch_norm(name='d_bn2')
+    self.d_bn3 = batch_norm(name='d_bn3')
     
     self.batch_size = config['batch_size']  # training minibatch size
     self.n_summary_per_batch = config['n_summary_per_batch'] 
@@ -189,22 +202,6 @@ class DrawModel(object):
   def binary_crossentropy(self, t, o):
     return -(t * tf.log(o + self.eps) + (1.0 - t) * tf.log(1.0 - o + self.eps))
   
-  def linear(self, x, output_dim, hidden_layer_size=64):
-    """
-    affine transformation Wx+b
-    assumes x.shape = (batch_size, num_features)
-    """
-#     w = tf.get_variable("w", [x.get_shape()[1], output_dim])  # , initializer=tf.random_normal_initializer()) 
-#   #   b = tf.get_variable("b", [output_dim], initializer=tf.constant_initializer(0.0))
-#     b = tf.get_variable("b", [output_dim], initializer=tf.random_normal_initializer())
-#     return tf.matmul(x, w) + b
-  
-    if hidden_layer_size > 0:
-      hidden = tf.contrib.layers.fully_connected(x, hidden_layer_size)
-      return tf.contrib.layers.fully_connected(hidden, output_dim, activation_fn=None)
-    else:
-      return tf.contrib.layers.fully_connected(x, output_dim, activation_fn=None)
-  
   def filterbank(self, gx, gy, sigma2, delta, N):
     grid_i = tf.reshape(tf.cast(tf.range(N), tf.float32), [1, -1])
     mu_x = gx + (grid_i - N / 2 - 0.5) * delta  # eq 19
@@ -225,7 +222,7 @@ class DrawModel(object):
     with tf.variable_scope(scope, reuse=self.DO_SHARE):
   #     print(h_dec.shape, x.shape, tf.concat([h_dec, x], 1).shape)
   #     params = linear(tf.concat([h_dec, x_hat], 1), 5)
-      params = self.linear(h_dec, 5, hidden_layer_size=self.config['n_hidden_units'])
+      params = linear2(h_dec, 5, hidden_layer_size=self.config['n_hidden_units'])
     # gx_,gy_,log_sigma2,log_delta,log_gamma=tf.split(1,5,params)
     gx_, gy_, log_sigma2, log_delta, log_gamma = tf.split(params, 5, 1)
     gx = (self.A + 1) / 2 * (gx_ + 1)
@@ -240,7 +237,7 @@ class DrawModel(object):
    
   def write_attn_window(self, scope, h_dec, N):
     with tf.variable_scope(scope, reuse=self.DO_SHARE):
-        params = self.linear(h_dec, 5, hidden_layer_size=self.config['n_hidden_units'])
+        params = linear2(h_dec, 5, hidden_layer_size=self.config['n_hidden_units'])
     # gx_,gy_,log_sigma2,log_delta,log_gamma=tf.split(1,5,params)
     gx_, gy_, unscaled_sigma2, log_delta, log_gamma = tf.split(params, 5, 1)
     gx = (self.A + 1) / 2 * (gx_ + 1)
@@ -289,9 +286,9 @@ class DrawModel(object):
     mu is (batch,z_size)
     """
     with tf.variable_scope("mu", reuse=self.DO_SHARE):
-        mu = self.linear(h_enc, self.z_size, hidden_layer_size=self.config['n_hidden_units'])
+        mu = linear2(h_enc, self.z_size, hidden_layer_size=self.config['n_hidden_units'])
     with tf.variable_scope("sigma", reuse=self.DO_SHARE):
-        logsigma = self.linear(h_enc, self.z_size, hidden_layer_size=self.config['n_hidden_units'])
+        logsigma = linear2(h_enc, self.z_size, hidden_layer_size=self.config['n_hidden_units'])
         sigma = tf.exp(logsigma)
     return (mu + sigma * self.e, mu, logsigma, sigma)
   
@@ -303,11 +300,11 @@ class DrawModel(object):
   # # WRITER ## 
   def write_no_attn(self, h_dec):
     with tf.variable_scope("write", reuse=self.DO_SHARE):
-        return self.linear(h_dec, self.img_size, hidden_layer_size=self.config['n_hidden_units']), tf.concat([0, 0, 0], 1)
+        return linear2(h_dec, self.img_size, hidden_layer_size=self.config['n_hidden_units']), tf.concat([0, 0, 0], 1)
   
   def write_attn(self, h_dec):
     with tf.variable_scope("writeW", reuse=self.DO_SHARE):
-        w1 = tf.exp(self.linear(h_dec, self.write_size, hidden_layer_size=self.config['n_hidden_units']))  # batch x (write_n*write_n)
+        w1 = tf.exp(linear2(h_dec, self.write_size, hidden_layer_size=self.config['n_hidden_units']))  # batch x (write_n*write_n)
   #   w = tf.ones((batch_size, write_size))
     N = self.write_n
     w = tf.reshape(w1, [self.batch_size, N, N])
@@ -328,7 +325,7 @@ class DrawModel(object):
       return y
 
     with tf.variable_scope("write_decision", reuse=self.DO_SHARE):
-      sw_log_odds = self.linear(h_dec, 1, hidden_layer_size=self.config['n_hidden_units'])
+      sw_log_odds = linear2(h_dec, 1, hidden_layer_size=self.config['n_hidden_units'])
       
     sw_pre_sigmoid = _concrete_binary_pre_sigmoid_sample(sw_log_odds, self.write_decision_temperature)
     sw = tf.sigmoid(sw_pre_sigmoid)
@@ -339,8 +336,11 @@ class DrawModel(object):
   
   def draw_loop_body(self, t, stop_sum, should_write_decision, stop_times, cs, scs, read_bb, write_bb, mus, logsigmas, sigmas,
                      should_write_log_odds, should_write_pre_sigmoid, h_dec_prev, enc_state, dec_state):
-    stop_times += tf.where(tf.less(stop_sum, self.stop_writing_threshold),
-                           tf.ones(self.batch_size, dtype=tf.int32), tf.zeros(self.batch_size, dtype=tf.int32))
+    if self.draw_all_time:
+      stop_times += tf.ones(self.batch_size, dtype=tf.int32)
+    else:
+      stop_times += tf.where(tf.less(stop_sum, self.stop_writing_threshold),
+                             tf.ones(self.batch_size, dtype=tf.int32), tf.zeros(self.batch_size, dtype=tf.int32))
     c_prev = tf.cond(tf.equal(t, 0), lambda: self.start_canvas_, lambda: cs.read(t - 1))
     x_hat = self.input_ - tf.tanh(c_prev)  # error image
     r = self.read(self.input_, x_hat, h_dec_prev)
@@ -353,13 +353,15 @@ class DrawModel(object):
     h_dec, dec_state = self.decode(dec_state, z)
     write_output = self.write(h_dec)
     sw, sw_log_odd, sw_pre_sigmoid = self.write_decision(h_dec)
-    cs = cs.write(
-      t, tf.where(tf.less(stop_sum, self.stop_writing_threshold),
-                  c_prev + tf.tile(tf.sigmoid(sw_log_odd), [1, self.img_size]) * write_output[0], tf.zeros_like(c_prev)))
-#     cs = cs.write(
-#       t, tf.where(tf.less(stop_sum, self.stop_writing_threshold),
-#                   c_prev + write_output[0], tf.zeros_like(c_prev)))
-#     cs = cs.write(t, tf.zeros_like(c_prev))
+    if self.draw_all_time:
+      cs = cs.write(t, c_prev + write_output[0])
+    else:
+      cs = cs.write(
+        t, tf.where(tf.less(stop_sum, self.stop_writing_threshold),
+                    c_prev + tf.tile(tf.sigmoid(sw_log_odd), [1, self.img_size]) * write_output[0], tf.zeros_like(c_prev)))
+#       cs = cs.write(
+#         t, tf.where(tf.less(stop_sum, self.stop_writing_threshold),
+#                     c_prev + write_output[0], tf.zeros_like(c_prev)))
     should_write_log_odds = should_write_log_odds.write(t, sw_log_odd)
     should_write_pre_sigmoid = should_write_pre_sigmoid.write(t, sw_pre_sigmoid)
     stop_sum += 1.0 - tf.reshape(sw, [self.batch_size])
@@ -387,6 +389,48 @@ class DrawModel(object):
 #       tf.less(t, self.T),
 #       tf.reduce_any(tf.less(stop_sum, self.stop_writing_threshold)))
     return tf.less(t, self.T)
+  
+  def discriminator(self, image, y=None, reuse=False):
+    with tf.variable_scope("discriminator") as scope:
+      if reuse:
+        scope.reuse_variables()
+    
+      if not self.y_dim:
+        h0 = lrelu(conv2d(image, self.df_dim, name='d_h0_conv'))
+        if self.d_bn:
+          h1 = lrelu(self.d_bn1(conv2d(h0, self.df_dim * 2, name='d_h1_conv')))
+          h2 = lrelu(self.d_bn2(conv2d(h1, self.df_dim * 4, name='d_h2_conv')))
+          h3 = lrelu(self.d_bn3(conv2d(h2, self.df_dim * 8, name='d_h3_conv')))
+        else:
+          h1 = lrelu(conv2d(h0, self.df_dim * 2, name='d_h1_conv'))
+          h2 = lrelu(conv2d(h1, self.df_dim * 4, name='d_h2_conv'))
+          h3 = lrelu(conv2d(h2, self.df_dim * 8, name='d_h3_conv'))
+        h4 = linear(tf.reshape(h3, [self.batch_size, -1]), 1)
+    
+        return tf.nn.sigmoid(h4), h4
+      else:
+        yb = tf.reshape(y, [self.batch_size, 1, 1, self.y_dim])
+        x = conv_cond_concat(image, yb)
+    
+        h0 = lrelu(conv2d(x, 1 + self.y_dim, name='d_h0_conv'))
+        h0 = conv_cond_concat(h0, yb)
+    
+        if self.d_bn:
+          h1 = lrelu(self.d_bn1(conv2d(h0, self.df_dim + self.y_dim, name='d_h1_conv')))
+        else:
+          h1 = lrelu(conv2d(h0, self.df_dim + self.y_dim, name='d_h1_conv'))
+        h1 = tf.reshape(h1, [self.batch_size, -1])      
+        h1 = concat([h1, y], 1)
+        
+        if self.d_bn:
+          h2 = lrelu(self.d_bn2(linear(h1, self.dfc_dim)))
+        else:
+          h2 = lrelu(linear(h1, self.dfc_dim))
+        h2 = concat([h2, y], 1)
+    
+        h3 = linear(h2, 1)
+        
+        return tf.nn.sigmoid(h3), h3
     
   def build_model(self):
     """
@@ -398,9 +442,9 @@ class DrawModel(object):
       enc_state = self.lstm_enc.zero_state(self.batch_size, tf.float32)
       dec_state = self.lstm_dec.zero_state(self.batch_size, tf.float32)
       
-#       tf.summary.scalar('stop threshold', self.stop_writing_threshold, collections=[self.summary_collection])
       tf.summary.scalar('max draw time', self.T, collections=[self.summary_collection], family='variables')
       
+      # Generator
       t = tf.constant(0);
       stop_sum = tf.zeros(self.batch_size)
       t, stop_sum, self.should_write_decision, self.stop_times, self.cs, self.scs, self.read_bb, self.write_bb, self.mus, self.logsigmas, self.sigmas, \
@@ -409,6 +453,7 @@ class DrawModel(object):
                       [t, stop_sum, self.should_write_decision, self.stop_times, self.cs, self.scs, self.read_bb, self.write_bb, self.mus, self.logsigmas, self.sigmas, \
                        self.should_write_log_odds, self.should_write_pre_sigmoid, h_dec_prev, enc_state, dec_state],
                       parallel_iterations=1)
+        
       summary_decisions = tf.transpose(self.should_write_decision.stack(), perm=[1, 0, 2])[:self.n_summary_per_batch, :, :]
       tf.summary.image('Write Decision', \
                        tf.reshape(summary_decisions, shape=(1, self.n_summary_per_batch, self.config['T'], 1)), max_outputs=1, \
@@ -440,15 +485,15 @@ class DrawModel(object):
     if self.mode is not 'inference':
       with tf.name_scope('loss'):
 
-        # Reconstruction loss
-        def _reconstruction_loss_loop_body(t, stop_times, cs, x_recons):
+        # Reconstruction result
+        def _reconstruction_loop_body(t, stop_times, cs, x_recons):
           x_recons = tf.where(tf.less(t, stop_times), tf.nn.tanh(cs.read(t)), x_recons)
           return [tf.add(t, 1), stop_times, cs, x_recons]
           
         x_recons = tf.nn.tanh(self.cs.read(0))
         t = tf.constant(0)
         t, self.stop_times, self.cs, x_recons = \
-          tf.while_loop(lambda t, *_: tf.less(t, self.T), _reconstruction_loss_loop_body,
+          tf.while_loop(lambda t, *_: tf.less(t, self.T), _reconstruction_loop_body,
                         [t, self.stop_times, self.cs, x_recons], parallel_iterations=1)
         
         if self.draw_with_white:
@@ -462,13 +507,50 @@ class DrawModel(object):
         tf.summary.image('result',
                          tf.reshape(sx_recons, [1, self.B, self.n_summary_per_batch * self.A, 1]), max_outputs=1,
                          collections=[self.summary_collection])
-        # after computing binary cross entropy, sum across features then take the mean of those sums across minibatches
-        # reconstruction term
-#         x_recons = tf.nn.tanh(self.cs.read(self.T - 1))
+        
+        # Reconstruction loss - Cross entropy
         Lx_end = tf.reduce_sum(self.binary_crossentropy(self.input_, x_recons), 1)
         Lx_end = tf.reduce_mean(Lx_end)
         self.Lx = Lx_end
         tf.summary.scalar('Reconstruction Loss', self.Lx, collections=[self.summary_collection], family='loss')
+        
+        # Reconstruction loss - Discriminator
+        real_data = tf.concat([self.input_, self.input_], axis=1)
+        fake_data = tf.concat([x_recons, self.input_], axis=1)
+        D, D_logits = self.discriminator(tf.reshape(real_data, [self.batch_size, 2 * self.B, self.A, 1]),
+                                                    None, reuse=False if self.mode is 'training' else True)
+        D_, D__logits = self.discriminator(tf.reshape(fake_data, [self.batch_size, 2 * self.B, self.A, 1]),
+                                                      None, reuse=True)
+        tf.summary.histogram('Discriminator result on input', D, collections=[self.summary_collection])
+        tf.summary.histogram('Discriminator result on reconstruction', D_, collections=[self.summary_collection])
+        # DCGAN
+#         d_loss_real = tf.reduce_mean(
+#           tf.nn.sigmoid_cross_entropy_with_logits(logits=D_logits, labels=tf.ones_like(D)))
+#         d_loss_fake = tf.reduce_mean(
+#           tf.nn.sigmoid_cross_entropy_with_logits(logits=D__logits, labels=tf.zeros_like(D_)))
+#         self.d_loss = d_loss_fake + d_loss_real
+#         tf.summary.scalar('Discriminator Loss (real)', d_loss_real, collections=[self.summary_collection], family='loss')
+#         tf.summary.scalar('Discriminator Loss (fake)', d_loss_fake, collections=[self.summary_collection], family='loss')
+#         tf.summary.scalar('Discriminator Loss', self.d_loss, collections=[self.summary_collection], family='loss')
+#         self.Lg = tf.reduce_mean(
+#           tf.nn.sigmoid_cross_entropy_with_logits(logits=D__logits, labels=tf.ones_like(D_)))
+#         tf.summary.scalar('Generator Loss', self.Lg, collections=[self.summary_collection], family='loss')
+        # WGAN - GP
+        critic_loss = tf.reduce_mean(D__logits) - tf.reduce_mean(D_logits)
+        alpha = tf.random_uniform([self.batch_size, 1], minval=0.0, maxval=1.0)
+        differences = fake_data - real_data
+        interpolates = real_data + (alpha * differences)
+        diff_probs, diff_logits = self.discriminator(tf.reshape(interpolates, [self.batch_size, 2 * self.B, self.A, 1]),
+                                                     None, reuse=True)
+        gradients = tf.gradients(diff_logits, [interpolates])[0]
+        slopes = tf.sqrt(1e-8 + tf.reduce_sum(tf.square(gradients), reduction_indices=[1]))
+        gradient_penalty = tf.reduce_mean((slopes - 1.) ** 2)
+        self.d_loss = critic_loss + 10.0 * gradient_penalty
+        tf.summary.scalar('Critic Loss', critic_loss, collections=[self.summary_collection], family='loss')
+        tf.summary.scalar('Gradient penalty', gradient_penalty, collections=[self.summary_collection], family='loss')
+        tf.summary.scalar('Discriminator Loss', self.d_loss, collections=[self.summary_collection], family='loss')
+        self.Lg = -tf.reduce_mean(D__logits)
+        tf.summary.scalar('Generator Loss', self.Lg, collections=[self.summary_collection], family='loss')
         
         # Latent loss
         def _latent_loss_loop_body(scaling_factor, t, stop_times, mus, sigmas, logsigmas, KL):
@@ -560,9 +642,8 @@ class DrawModel(object):
 #         Lssim = tf.reduce_mean((1 - tf.image.ssim(self.input_, x_recons, max_val=1.0)) / 2)
         
         # Total loss
-        self.loss = self.Lx + self.Lz + self.Lwrite  # + self.Lintensity
-#         self.loss = self.Lx + self.Lz + self.Lmove
-#         self.loss = self.Lx + self.Lmove
+#         self.loss = self.Lx + self.Lz + self.Lwrite  # + self.Lintensity
+        self.loss = self.Lx + self.Lg + self.Lz + self.Lwrite  # + self.Lintensity
         tf.summary.scalar('Total Loss', self.loss, collections=[self.summary_collection], family='loss')
         
   def build_optim(self):
@@ -570,6 +651,7 @@ class DrawModel(object):
     Builds optimizer for training
     """
     if self.mode == 'training':
+      # Generator
       optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate, beta1=0.5)
       # clip gradients
       grads = optimizer.compute_gradients(self.loss)
@@ -583,6 +665,15 @@ class DrawModel(object):
           tf.summary.scalar(v.name + '_clipped_grad_norm', tf.norm(grads[i][0]), collections=[self.summary_collection], family='grads_norm')
           tf.summary.scalar(v.name + '_clipped_grad_avg', tf.reduce_mean(grads[i][0]), collections=[self.summary_collection], family='grads_avg')
       self.train_op = optimizer.apply_gradients(grads, global_step=self.global_step)
+      
+      # Discriminator
+      d_optimizer = tf.train.AdamOptimizer(learning_rate=1e-4, beta1=0.5, beta2=0.9)
+      # clip gradients
+      d_grads = optimizer.compute_gradients(self.d_loss)
+#       for i, (g, v) in enumerate(d_grads):
+#         if g is not None:
+#           grads[i] = (tf.clip_by_norm(g, 1.0), v)  # clip gradients
+      self.d_train_op = d_optimizer.apply_gradients(d_grads)
   
   def count_parameters(self):
     """
