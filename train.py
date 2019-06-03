@@ -204,11 +204,16 @@ def main(config):
             saver.save(sess, os.path.join(config['model_dir'], 'drawmodel'), epoch)
         else:
           # Train discriminator
-          n_d_train_steps = 2
+          if draw_model.df_mode == 'dcgan':
+            n_d_train_steps = 1
+          else:
+            n_d_train_steps = 5
           for _ in range(n_d_train_steps):
             train_d_feed_dict = draw_model.get_feed_dict(xnext, cnext)
             train_d_fetches = {'train_op': draw_model.d_train_op}
             train_d_out = sess.run(train_d_fetches, train_d_feed_dict)
+            if not draw_model.df_mode == 'wgan':
+              _ = sess.run(draw_model.clip_disc_weights)
           # Train generator
           train_feed_dict = draw_model.get_feed_dict(xnext, cnext)
           train_feed_dict[draw_model.T] = draw_T

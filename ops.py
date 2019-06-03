@@ -20,24 +20,112 @@ def linear2(x, output_dim, hidden_layer_size=64):
     return tf.contrib.layers.fully_connected(hidden, output_dim, activation_fn=None)
   else:
     return tf.contrib.layers.fully_connected(x, output_dim, activation_fn=None)
-
   
-def linear(input_, output_size, stddev=0.02, bias_start=0.0, with_w=False):
-  shape = input_.get_shape().as_list()
-
-  try:
-    matrix = tf.get_variable("Matrix", [shape[1], output_size], tf.float32,
-               tf.random_normal_initializer(stddev=stddev))
-  except ValueError as err:
-      msg = "NOTE: Usually, this is due to an issue with the image dimensions.  Did you correctly set '--crop' or '--input_height' or '--output_height'?"
-      err.args = err.args + (msg,)
-      raise
-  bias = tf.get_variable("bias", [output_size],
-    initializer=tf.constant_initializer(bias_start))
-  if with_w:
-    return tf.matmul(input_, matrix) + bias, matrix, bias
-  else:
-    return tf.matmul(input_, matrix) + bias
+# def linear(input_, output_size, stddev=0.02, bias_start=0.0, with_w=False, initialization=None, weightnorm=None, gain=1.):
+#   shape = input_.get_shape().as_list()
+#   input_dim = shape[1]
+#   
+#   _weights_stdev = None
+# 
+#   def uniform(stdev, size):
+#       if _weights_stdev is not None:
+#           stdev = _weights_stdev
+#       return np.random.uniform(
+#           low=-stdev * np.sqrt(3),
+#           high=stdev * np.sqrt(3),
+#           size=size
+#       ).astype('float32')
+# 
+#   if initialization == 'lecun':  # and input_dim != output_dim):
+#       # disabling orth. init for now because it's too slow
+#       weight_values = uniform(
+#           np.sqrt(1. / input_dim),
+#           (input_dim, output_size)
+#       )
+# 
+#   elif initialization == 'glorot' or (initialization == None):
+# 
+#       weight_values = uniform(
+#           np.sqrt(2. / (input_dim + output_size)),
+#           (input_dim, output_size)
+#       )
+# 
+#   elif initialization == 'he':
+# 
+#       weight_values = uniform(
+#           np.sqrt(2. / input_dim),
+#           (input_dim, output_size)
+#       )
+# 
+#   elif initialization == 'glorot_he':
+# 
+#       weight_values = uniform(
+#           np.sqrt(4. / (input_dim + output_size)),
+#           (input_dim, output_size)
+#       )
+# 
+#   elif initialization == 'orthogonal' or \
+#       (initialization == None and input_dim == output_size):
+#       
+#       # From lasagne
+#       def sample(shape):
+#           if len(shape) < 2:
+#               raise RuntimeError("Only shapes of length 2 or more are "
+#                                  "supported.")
+#           flat_shape = (shape[0], np.prod(shape[1:]))
+#            # TODO: why normal and not uniform?
+#           a = np.random.normal(0.0, 1.0, flat_shape)
+#           u, _, v = np.linalg.svd(a, full_matrices=False)
+#           # pick the one with the correct shape
+#           q = u if u.shape == flat_shape else v
+#           q = q.reshape(shape)
+#           return q.astype('float32')
+# 
+#       weight_values = sample((input_dim, output_size))
+#   
+#   elif initialization[0] == 'uniform':
+#   
+#       weight_values = np.random.uniform(
+#           low=-initialization[1],
+#           high=initialization[1],
+#           size=(input_dim, output_size)
+#       ).astype('float32')
+# 
+#   else:
+# 
+#       raise Exception('Invalid initialization!')
+# 
+#   weight_values *= gain
+# 
+#   try:
+#     matrix = tf.get_variable("Matrix", [shape[1], output_size], tf.float32,
+#                tf.random_normal_initializer(stddev=stddev))
+#   except ValueError as err:
+#       msg = "NOTE: Usually, this is due to an issue with the image dimensions.  Did you correctly set '--crop' or '--input_height' or '--output_height'?"
+#       err.args = err.args + (msg,)
+#       raise
+#     
+# #   if weightnorm == None:
+# #       weightnorm = _default_weightnorm
+# #   if weightnorm:
+# #       norm_values = np.sqrt(np.sum(np.square(weight_values), axis=0))
+# #       # norm_values = np.linalg.norm(weight_values, axis=0)
+# # 
+# #       target_norms = lib.param(
+# #           name + '.g',
+# #           norm_values
+# #       )
+# # 
+# #       with tf.name_scope('weightnorm') as scope:
+# #           norms = tf.sqrt(tf.reduce_sum(tf.square(weight), reduction_indices=[0]))
+# #           weight = weight * (target_norms / norms)
+#                 
+#   bias = tf.get_variable("bias", [output_size],
+#     initializer=tf.constant_initializer(bias_start))
+#   if with_w:
+#     return tf.matmul(input_, matrix) + bias, matrix, bias
+#   else:
+#     return tf.matmul(input_, matrix) + bias
 
 
 if "concat_v2" in dir(tf):

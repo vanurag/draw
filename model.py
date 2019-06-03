@@ -3,6 +3,12 @@ import math
 from ops import *
 from matplotlib.pyplot import axis
 
+import tflib as lib
+import tflib.ops.linear
+import tflib.ops.conv2d
+import tflib.ops.batchnorm
+import tflib.ops.deconv2d
+
 
 class DrawModel(object):
   """
@@ -58,14 +64,16 @@ class DrawModel(object):
       self.stop_writing_threshold = tf.Variable(0.99, trainable=False)
     
     # Discriminator
-    self.y_dim = None
+    self.df_mode = 'dcgan'  # dcgan, wgan, or wgan-gp
+#     self.y_dim = None
     self.df_dim = 64  # num filters in first conv layer
-    self.dfc_dim = 1024  # fully connected layer units
+#     self.dfc_dim = 1024  # fully connected layer units
     # batch normalization : deals with poor initialization helps gradient flow
-    self.d_bn = False
-    self.d_bn1 = batch_norm(name='d_bn1')
-    self.d_bn2 = batch_norm(name='d_bn2')
-    self.d_bn3 = batch_norm(name='d_bn3')
+#     self.d_bn = False
+#     self.d_bn1 = batch_norm(name='d_bn1')
+#     self.d_bn2 = batch_norm(name='d_bn2')
+#     self.d_bn3 = batch_norm(name='d_bn3')
+#     self.d_grad_penalty = False  # whether to use WGAN with gradient penalty
     
     self.batch_size = config['batch_size']  # training minibatch size
     self.n_summary_per_batch = config['n_summary_per_batch'] 
@@ -390,47 +398,78 @@ class DrawModel(object):
 #       tf.reduce_any(tf.less(stop_sum, self.stop_writing_threshold)))
     return tf.less(t, self.T)
   
-  def discriminator(self, image, y=None, reuse=False):
+#   def discriminator(self, image, y=None, reuse=False):
+#     with tf.variable_scope("discriminator") as scope:
+#       if reuse:
+#         scope.reuse_variables()
+#     
+#       if not self.y_dim:
+#         h0 = lrelu(conv2d(image, self.df_dim, name='discriminator.h0_conv'))
+#         if self.d_bn:
+#           h1 = lrelu(self.d_bn1(conv2d(h0, self.df_dim * 2, name='discriminator.h1_conv')))
+#           h2 = lrelu(self.d_bn2(conv2d(h1, self.df_dim * 4, name='discriminator.h2_conv')))
+#           h3 = lrelu(self.d_bn3(conv2d(h2, self.df_dim * 8, name='discriminator.h3_conv')))
+#         else:
+#           h1 = lrelu(conv2d(h0, self.df_dim * 2, name='discriminator.h1_conv'))
+#           h2 = lrelu(conv2d(h1, self.df_dim * 4, name='discriminator.h2_conv'))
+#           h3 = lrelu(conv2d(h2, self.df_dim * 8, name='discriminator.h3_conv'))
+#         h4 = linear(tf.reshape(h3, [self.batch_size, -1]), 1)
+#     
+#         return tf.nn.sigmoid(h4), h4
+#       else:
+#         yb = tf.reshape(y, [self.batch_size, 1, 1, self.y_dim])
+#         x = conv_cond_concat(image, yb)
+#     
+#         h0 = lrelu(conv2d(x, 1 + self.y_dim, name='discriminator.h0_conv'))
+#         h0 = conv_cond_concat(h0, yb)
+#     
+#         if self.d_bn:
+#           h1 = lrelu(self.d_bn1(conv2d(h0, self.df_dim + self.y_dim, name='discriminator.h1_conv')))
+#         else:
+#           h1 = lrelu(conv2d(h0, self.df_dim + self.y_dim, name='discriminator.h1_conv'))
+#         h1 = tf.reshape(h1, [self.batch_size, -1])      
+#         h1 = concat([h1, y], 1)
+#         
+#         if self.d_bn:
+#           h2 = lrelu(self.d_bn2(linear(h1, self.dfc_dim)))
+#         else:
+#           h2 = lrelu(linear(h1, self.dfc_dim))
+#         h2 = concat([h2, y], 1)
+#     
+#         h3 = linear(h2, 1)
+#         
+#         return tf.nn.sigmoid(h3), h3
+
+  def discriminator(self, inputs, reuse=False):
+
+    def LeakyReLU(x, alpha=0.2):
+      return tf.maximum(alpha * x, x)
+  
     with tf.variable_scope("discriminator") as scope:
       if reuse:
         scope.reuse_variables()
-    
-      if not self.y_dim:
-        h0 = lrelu(conv2d(image, self.df_dim, name='d_h0_conv'))
-        if self.d_bn:
-          h1 = lrelu(self.d_bn1(conv2d(h0, self.df_dim * 2, name='d_h1_conv')))
-          h2 = lrelu(self.d_bn2(conv2d(h1, self.df_dim * 4, name='d_h2_conv')))
-          h3 = lrelu(self.d_bn3(conv2d(h2, self.df_dim * 8, name='d_h3_conv')))
-        else:
-          h1 = lrelu(conv2d(h0, self.df_dim * 2, name='d_h1_conv'))
-          h2 = lrelu(conv2d(h1, self.df_dim * 4, name='d_h2_conv'))
-          h3 = lrelu(conv2d(h2, self.df_dim * 8, name='d_h3_conv'))
-        h4 = linear(tf.reshape(h3, [self.batch_size, -1]), 1)
-    
-        return tf.nn.sigmoid(h4), h4
-      else:
-        yb = tf.reshape(y, [self.batch_size, 1, 1, self.y_dim])
-        x = conv_cond_concat(image, yb)
-    
-        h0 = lrelu(conv2d(x, 1 + self.y_dim, name='d_h0_conv'))
-        h0 = conv_cond_concat(h0, yb)
-    
-        if self.d_bn:
-          h1 = lrelu(self.d_bn1(conv2d(h0, self.df_dim + self.y_dim, name='d_h1_conv')))
-        else:
-          h1 = lrelu(conv2d(h0, self.df_dim + self.y_dim, name='d_h1_conv'))
-        h1 = tf.reshape(h1, [self.batch_size, -1])      
-        h1 = concat([h1, y], 1)
         
-        if self.d_bn:
-          h2 = lrelu(self.d_bn2(linear(h1, self.dfc_dim)))
-        else:
-          h2 = lrelu(linear(h1, self.dfc_dim))
-        h2 = concat([h2, y], 1)
-    
-        h3 = linear(h2, 1)
-        
-        return tf.nn.sigmoid(h3), h3
+      output = tf.reshape(inputs, [-1, 1, 2 * self.B, self.A])
+  
+      output = lib.ops.conv2d.Conv2D('Discriminator.1', 1, self.df_dim, 5, output, stride=2)
+      output = LeakyReLU(output)
+  
+      output = lib.ops.conv2d.Conv2D('Discriminator.2', self.df_dim, 2 * self.df_dim, 5, output, stride=2)
+      if self.df_mode == 'wgan':
+          output = lib.ops.batchnorm.Batchnorm('Discriminator.BN2', [0, 2, 3], output)
+      output = LeakyReLU(output)
+  
+      output = lib.ops.conv2d.Conv2D('Discriminator.3', 2 * self.df_dim, 4 * self.df_dim, 5, output, stride=2)
+      if self.df_mode == 'wgan':
+          output = lib.ops.batchnorm.Batchnorm('Discriminator.BN3', [0, 2, 3], output)
+      output = LeakyReLU(output)
+  
+      output = tf.reshape(output, [-1, 4 * 4 * 4 * self.df_dim])
+      output = lib.ops.linear.Linear('Discriminator.Output', 4 * 4 * 4 * self.df_dim, 1, output)
+      
+      output = tf.reshape(output, [-1])
+  
+      return tf.nn.sigmoid(output), output
     
   def build_model(self):
     """
@@ -508,21 +547,91 @@ class DrawModel(object):
                          tf.reshape(sx_recons, [1, self.B, self.n_summary_per_batch * self.A, 1]), max_outputs=1,
                          collections=[self.summary_collection])
         
+        #############################################################
         # Reconstruction loss - Cross entropy
+        #############################################################
         Lx_end = tf.reduce_sum(self.binary_crossentropy(self.input_, x_recons), 1)
         Lx_end = tf.reduce_mean(Lx_end)
         self.Lx = Lx_end
         tf.summary.scalar('Reconstruction Loss', self.Lx, collections=[self.summary_collection], family='loss')
         
+        #############################################################
         # Reconstruction loss - Discriminator
+        #############################################################
         real_data = tf.concat([self.input_, self.input_], axis=1)
         fake_data = tf.concat([x_recons, self.input_], axis=1)
-        D, D_logits = self.discriminator(tf.reshape(real_data, [self.batch_size, 2 * self.B, self.A, 1]),
-                                                    None, reuse=False if self.mode is 'training' else True)
-        D_, D__logits = self.discriminator(tf.reshape(fake_data, [self.batch_size, 2 * self.B, self.A, 1]),
-                                                      None, reuse=True)
+        D, D_logits = self.discriminator(tf.reshape(real_data, [self.batch_size, 1, 2 * self.B, self.A]),
+                                                    reuse=False if self.mode is 'training' else True)
+        D_, D__logits = self.discriminator(tf.reshape(fake_data, [self.batch_size, 1, 2 * self.B, self.A]),
+                                                      reuse=True)
         tf.summary.histogram('Discriminator result on input', D, collections=[self.summary_collection])
         tf.summary.histogram('Discriminator result on reconstruction', D_, collections=[self.summary_collection])
+        
+        if self.df_mode == 'wgan':
+          self.Lg = -tf.reduce_mean(D__logits)
+          self.d_loss = tf.reduce_mean(D__logits) - tf.reduce_mean(D_logits)
+      
+#           gen_train_op = tf.train.RMSPropOptimizer(
+#               learning_rate=5e-5
+#           ).minimize(gen_cost, var_list=gen_params)
+#           disc_train_op = tf.train.RMSPropOptimizer(
+#               learning_rate=5e-5
+#           ).minimize(disc_cost, var_list=disc_params)
+        elif self.df_mode == 'wgan-gp':
+          self.Lg = -tf.reduce_mean(D__logits)
+          critic_loss = tf.reduce_mean(D__logits) - tf.reduce_mean(D_logits)
+          tf.summary.scalar('Critic Loss', critic_loss, collections=[self.summary_collection], family='loss')
+      
+          alpha = tf.random_uniform(
+            shape=[self.batch_size, 1],
+            minval=0.,
+            maxval=1.
+          )
+          differences = fake_data - real_data
+          interpolates = real_data + (alpha * differences)
+          gradients = tf.gradients(self.discriminator(interpolates), [interpolates])[0]
+          slopes = tf.sqrt(tf.reduce_sum(tf.square(gradients), reduction_indices=[1]))
+          gradient_penalty = tf.reduce_mean((slopes - 1.) ** 2)
+          tf.summary.scalar('Gradient penalty', gradient_penalty, collections=[self.summary_collection], family='loss')
+          self.d_loss = critic_loss + 10.0 * gradient_penalty
+      
+#           gen_train_op = tf.train.AdamOptimizer(
+#               learning_rate=1e-4,
+#               beta1=0.5,
+#               beta2=0.9
+#           ).minimize(gen_cost, var_list=gen_params)
+#           disc_train_op = tf.train.AdamOptimizer(
+#               learning_rate=1e-4,
+#               beta1=0.5,
+#               beta2=0.9
+#           ).minimize(disc_cost, var_list=disc_params)
+        elif self.df_mode == 'dcgan':
+          self.Lg = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
+            logits=D__logits,
+            labels=tf.ones_like(D__logits)
+          ))
+      
+          d_loss_fake = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
+            logits=D__logits,
+            labels=tf.zeros_like(D__logits)
+          ))
+          tf.summary.scalar('Discriminator Loss (fake)', d_loss_fake, collections=[self.summary_collection], family='loss')
+          d_loss_real = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
+            logits=D_logits,
+            labels=tf.ones_like(D_logits)
+          ))
+          tf.summary.scalar('Discriminator Loss (real)', d_loss_real, collections=[self.summary_collection], family='loss')
+          self.d_loss = (d_loss_real + d_loss_fake) / 2.
+        
+#             gen_train_op = tf.train.AdamOptimizer(
+#                 learning_rate=2e-4,
+#                 beta1=0.5
+#             ).minimize(gen_cost, var_list=gen_params)
+#             disc_train_op = tf.train.AdamOptimizer(
+#                 learning_rate=2e-4,
+#                 beta1=0.5
+#             ).minimize(disc_cost, var_list=disc_params)
+        
         # DCGAN
 #         d_loss_real = tf.reduce_mean(
 #           tf.nn.sigmoid_cross_entropy_with_logits(logits=D_logits, labels=tf.ones_like(D)))
@@ -536,23 +645,25 @@ class DrawModel(object):
 #           tf.nn.sigmoid_cross_entropy_with_logits(logits=D__logits, labels=tf.ones_like(D_)))
 #         tf.summary.scalar('Generator Loss', self.Lg, collections=[self.summary_collection], family='loss')
         # WGAN - GP
-        critic_loss = tf.reduce_mean(D__logits) - tf.reduce_mean(D_logits)
-        alpha = tf.random_uniform([self.batch_size, 1], minval=0.0, maxval=1.0)
-        differences = fake_data - real_data
-        interpolates = real_data + (alpha * differences)
-        diff_probs, diff_logits = self.discriminator(tf.reshape(interpolates, [self.batch_size, 2 * self.B, self.A, 1]),
-                                                     None, reuse=True)
-        gradients = tf.gradients(diff_logits, [interpolates])[0]
-        slopes = tf.sqrt(1e-8 + tf.reduce_sum(tf.square(gradients), reduction_indices=[1]))
-        gradient_penalty = tf.reduce_mean((slopes - 1.) ** 2)
-        self.d_loss = critic_loss + 10.0 * gradient_penalty
-        tf.summary.scalar('Critic Loss', critic_loss, collections=[self.summary_collection], family='loss')
-        tf.summary.scalar('Gradient penalty', gradient_penalty, collections=[self.summary_collection], family='loss')
+#         critic_loss = tf.reduce_mean(D__logits) - tf.reduce_mean(D_logits)
+#         alpha = tf.random_uniform([self.batch_size, 1], minval=0.0, maxval=1.0)
+#         differences = fake_data - real_data
+#         interpolates = real_data + (alpha * differences)
+#         diff_probs, diff_logits = self.discriminator(tf.reshape(interpolates, [self.batch_size, 2 * self.B, self.A, 1]),
+#                                                      reuse=True)
+#         gradients = tf.gradients(diff_logits, [interpolates])[0]
+#         slopes = tf.sqrt(1e-8 + tf.reduce_sum(tf.square(gradients), reduction_indices=[1]))
+#         gradient_penalty = tf.reduce_mean((slopes - 1.) ** 2)
+#         self.d_loss = critic_loss + 10.0 * gradient_penalty
+#         tf.summary.scalar('Critic Loss', critic_loss, collections=[self.summary_collection], family='loss')
+#         tf.summary.scalar('Gradient penalty', gradient_penalty, collections=[self.summary_collection], family='loss')
         tf.summary.scalar('Discriminator Loss', self.d_loss, collections=[self.summary_collection], family='loss')
-        self.Lg = -tf.reduce_mean(D__logits)
+#         self.Lg = -tf.reduce_mean(D__logits)
         tf.summary.scalar('Generator Loss', self.Lg, collections=[self.summary_collection], family='loss')
         
+        #############################################################
         # Latent loss
+        #############################################################
         def _latent_loss_loop_body(scaling_factor, t, stop_times, mus, sigmas, logsigmas, KL):
           mu2 = scaling_factor * tf.square(mus.read(t))
           sigma2 = scaling_factor * tf.square(sigmas.read(t))
@@ -572,7 +683,9 @@ class DrawModel(object):
         self.Lz = tf.reduce_mean(KL)  # average over minibatches
         tf.summary.scalar('Latent Loss', self.Lz, collections=[self.summary_collection], family='loss')
         
+        #############################################################
         # Write decision loss
+        #############################################################
         def _writing_loss_loop_body(t, stop_times, sw_log_odds, sw_pre_sigmoid, WL):
 
           def _concrete_binary_kl_mc_sample(
@@ -600,7 +713,9 @@ class DrawModel(object):
         self.Lwrite = tf.reduce_mean(WL)  # average over minibatches
         tf.summary.scalar('Write Loss', self.Lwrite, collections=[self.summary_collection], family='loss')
         
+        #############################################################
         # Movement loss
+        #############################################################
         def _movement_loss_loop_body(t, write_bb, total_movement):
           total_movement = tf.add(total_movement, tf.norm(write_bb.read(t + 1)[:, :2] - write_bb.read(t)[:, :2], axis=1))
           return [tf.add(t, 1), write_bb, total_movement]
@@ -615,7 +730,9 @@ class DrawModel(object):
         self.Lmove = tf.reduce_mean(total_movement)
         tf.summary.scalar('Movement Loss', self.Lmove, collections=[self.summary_collection], family='loss')
         
+        #############################################################
         # Intensity change loss
+        #############################################################
         def _intensity_change_loss_loop_body(t, stop_times, write_bb, total_intensity_change, draw_intensity):
           draw_intensity = draw_intensity.write(
             t, tf.where(tf.less(t, self.stop_times), tf.reshape([write_bb.read(t)[:, 3]], shape=(-1, 1)),
@@ -636,12 +753,16 @@ class DrawModel(object):
                                        shape=(1, self.batch_size, self.config['T'], 1))
         tf.summary.image('Draw Intensity', summary_intensity, max_outputs=1, collections=[self.summary_collection])
         
+        #############################################################
         # SSIM loss
+        #############################################################
 #         bla = (1 - tf.image.ssim(self.input_, x_recons, max_val=1.0)) / 2
 #         print(bla.shape)
 #         Lssim = tf.reduce_mean((1 - tf.image.ssim(self.input_, x_recons, max_val=1.0)) / 2)
         
+        #############################################################
         # Total loss
+        #############################################################
 #         self.loss = self.Lx + self.Lz + self.Lwrite  # + self.Lintensity
         self.loss = self.Lx + self.Lg + self.Lz + self.Lwrite  # + self.Lintensity
         tf.summary.scalar('Total Loss', self.loss, collections=[self.summary_collection], family='loss')
@@ -668,7 +789,19 @@ class DrawModel(object):
       
       # Discriminator
       d_optimizer = tf.train.AdamOptimizer(learning_rate=1e-4, beta1=0.5, beta2=0.9)
-      # clip gradients
+
+      # clip weights
+      clip_ops = []
+      for var in tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='discriminator'):
+        clip_bounds = [-.01, .01]
+        clip_ops.append(
+          tf.assign(
+            var,
+            tf.clip_by_value(var, clip_bounds[0], clip_bounds[1])
+            )
+          )
+      self.clip_disc_weights = tf.group(*clip_ops)
+    
       d_grads = optimizer.compute_gradients(self.d_loss)
 #       for i, (g, v) in enumerate(d_grads):
 #         if g is not None:
