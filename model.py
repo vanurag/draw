@@ -764,7 +764,7 @@ class DrawModel(object):
         # Total loss
         #############################################################
 #         self.loss = self.Lx + self.Lz + self.Lwrite  # + self.Lintensity
-        self.loss = self.Lx + self.Lg + self.Lz + self.Lwrite  # + self.Lintensity
+        self.loss = self.Lx + self.Lg + self.Lz  # + self.Lwrite  + self.Lintensity
         tf.summary.scalar('Total Loss', self.loss, collections=[self.summary_collection], family='loss')
         
   def build_optim(self):

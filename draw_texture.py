@@ -77,7 +77,8 @@ def get_next_layer(residual, write_radius):
 
 def export_draw_result_to_file(file_handle, write_bbs):
   for t in range(len(write_bbs)):
-    print >> file_handle, "%4f %4f %4f %4f" % (write_bbs[t, 0], write_bbs[t, 1], write_bbs[t, 2], write_bbs[t, 3])
+    # x, y, spray-radius, paint-thickness 
+    print >> file_handle, "%4f %4f %4f %4f" % (write_bbs[t, 0], write_bbs[t, 1], write_bbs[t, 2] / 2., write_bbs[t, 3])
   return
 
   
