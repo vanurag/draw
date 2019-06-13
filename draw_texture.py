@@ -20,27 +20,30 @@ import matplotlib.pyplot as plt
 
 tf.flags.DEFINE_string("test_dir", "", "")
 tf.flags.DEFINE_string("output_dir", "", "")
-tf.flags.DEFINE_integer("draw_width", 32, "Width of the draw result")
-tf.flags.DEFINE_integer("draw_height", 32, "Height of the draw result")
+tf.flags.DEFINE_integer("draw_width", -1, "Resize images to this width before processing. Input image width chosen if negative.")
+tf.flags.DEFINE_integer("draw_height", -1, "Resize images to this height before processing. Input image height chosen if negative.")
+tf.flags.DEFINE_bool("save_results_to_png", False, "Save individual draw result as a png")
 FLAGS = tf.flags.FLAGS
 
 
-def load_data(img_width, img_height, flip_image, batch_size, data_dir):
+def load_data(img_width, img_height, flip_image, data_dir):
   print('Loading data from {} ...'.format(data_dir))
 
   # Reads an image from a file, decodes it into a dense tensor, and resizes it
   # to a fixed shape.
   def _parse_function(filename):
     image_string = tf.read_file(filename)
-    image_gray = tf.image.decode_jpeg(image_string, channels=1)
-    image_converted = tf.image.convert_image_dtype(image_gray, tf.float32)
-    image_resized = tf.image.resize_images(image_converted, [img_width, img_height])
+    image_rgb = tf.image.decode_jpeg(image_string, channels=3)
+    image_converted = tf.image.convert_image_dtype(image_rgb, tf.float32)
+    image_resized = image_converted
+    if img_width > 0 and img_height > 0:
+      image_resized = tf.image.resize_images(image_converted, [img_width, img_height])
     image_flattened = tf.reshape(image_resized, [-1])
     return_image = image_flattened
     if flip_image:  # not config['draw_with_white']:
       return_image = 1.0 - image_flattened
     return_image = tf.clip_by_value(return_image, 0.0, 0.99)  # for numeric stability during arctanh() operation
-    return return_image
+    return return_image, tf.shape(image_resized)
 
   train_directory = data_dir
   if not os.path.exists(train_directory):
@@ -50,16 +53,16 @@ def load_data(img_width, img_height, flip_image, batch_size, data_dir):
 #   train_files = train_files[:10000]
   print('Loading dataset with {} images'.format(len(train_files)))
   idx = np.arange(len(train_files))
-  np.random.shuffle(idx)
+#   np.random.shuffle(idx)
   train_filenames = [os.path.join(train_directory, train_files[i]) for i in idx]
   
   train_dataset = tf.data.Dataset.from_tensor_slices(train_filenames)
   train_dataset = train_dataset.map(_parse_function)
-  train_dataset = train_dataset.repeat().batch(batch_size)
+  train_dataset = train_dataset.repeat().batch(1)
   train_dataset_iterator = train_dataset.make_one_shot_iterator()
-  next_training_batch = train_dataset_iterator.get_next()
+  next_texture, next_texture_shape = train_dataset_iterator.get_next()
   
-  return len(train_files), next_training_batch
+  return train_files, next_texture, next_texture_shape
 
 
 def get_next_layer(residual, write_radius):
@@ -84,8 +87,8 @@ def export_draw_result_to_file(file_handle, write_bbs):
   
 def main(config):
   # Load texture image
-  n_test_textures, next_texture = load_data(
-    FLAGS.draw_width, FLAGS.draw_height, not config['draw_with_white'], config['batch_size'], FLAGS.test_dir)
+  test_textures, next_texture, next_texture_shape = load_data(
+    FLAGS.draw_width, FLAGS.draw_height, not config['draw_with_white'], FLAGS.test_dir)
   
   # Create output file for exporting result
   if not os.path.exists(FLAGS.output_dir):
@@ -114,88 +117,115 @@ def main(config):
     saver.restore(sess, ckpt_path)
     
     n_layers = 5
-    f, arr = plt.subplots(2 + n_layers, 2 * n_test_textures)
-    for t in range(n_test_textures):
+    if not FLAGS.save_results_to_png:
+      f, arr = plt.subplots(2 + n_layers, 2 * len(test_textures))
+    for t in range(len(test_textures)):
       start_time = time.time()
-      xnext = sess.run(next_texture)
-      input_texture = np.reshape(xnext, (FLAGS.draw_height, FLAGS.draw_width))
-      end_result = np.zeros(input_texture.shape)
       
-      # Draw layers
+      fetches = {
+        'xnext' : next_texture,
+        'xnext_shape' : next_texture_shape[0] 
+      }
+      next_out = sess.run(fetches)
+      print(next_out['xnext_shape'])
+#       if FLAGS.draw_height < 0 and FLAGS.draw_width < 0:
+      FLAGS.draw_height = next_out['xnext_shape'][0]
+      FLAGS.draw_width = next_out['xnext_shape'][1]
+      input_texture = np.reshape(next_out['xnext'], (FLAGS.draw_height, FLAGS.draw_width, 3))
+      end_result = np.zeros(input_texture.shape)
       ideal_end_result = np.zeros(input_texture.shape)
-      residual = input_texture
-      for l in range(n_layers):
-        if l == 0:
-          # Base coat
-          base_coat = np.quantile(input_texture, 0.01)
-          M0 = (input_texture >= base_coat).astype(np.float)
-          F0 = base_coat * M0
-          L_ref = ndimage.gaussian_filter(F0, sigma=config['write_radius'] / 2)
-        else:
-          # Get next layer
-          L_ref = get_next_layer(residual, config['write_radius'])
-        ideal_end_result = ideal_end_result + L_ref
-        
-        # Get patches of config['B'] x config['A'] size to draw
-        draw_result = np.zeros((FLAGS.draw_height, FLAGS.draw_width))
-        n_patches_a = FLAGS.draw_width / config['A']
-        n_patches_b = FLAGS.draw_height / config['B']
-        for p_b in range(n_patches_b):
-          for p_a in range(n_patches_a):
-            patch_row = config['B'] * p_b
-            patch_col = config['A'] * p_a
-            patch = L_ref[patch_row:patch_row + config['B'], patch_col:patch_col + config['A']]
-            xref = np.reshape(patch, (1, config['img_size']))
-            cref = np.zeros([config['batch_size'], config['img_size']])
-            
-            feed_dict = draw_model.get_feed_dict(xref, cref)
-            fetches = {'canvases': draw_model.cs.stack(), 'write_bbs': draw_model.write_bb.stack(),
-                       'write_times': draw_model.stop_times}
-            test_out = sess.run(fetches, feed_dict)
-            # results
-            canvases = np.concatenate(test_out['canvases'])  # T x img_size
-            write_bounding_boxes = np.reshape(np.array(test_out['write_bbs']), (config['T'], 4))  # T x 4
-            write_times = test_out['write_times']
-            
-            # export
-            export_draw_result_to_file(output_file, write_bounding_boxes)
-            
-            draw_result[patch_row:patch_row + config['B'], patch_col:patch_col + config['A']] = \
-              np.reshape(canvases[write_times - 1, :], (config['B'], config['A']))
-        
-        L_ref_viz = 1 - L_ref if not config['draw_with_white'] else L_ref
-        draw_result_viz = 1 - draw_result if not config['draw_with_white'] else draw_result
-        arr[l + 1, 2 * t].imshow(L_ref_viz, cmap='gray', vmin=0, vmax=1)
-        arr[l + 1, 2 * t].set_xticks([])
-        arr[l + 1, 2 * t].set_yticks([])
-        arr[l + 1, 2 * t + 1].imshow(draw_result_viz, cmap='gray', vmin=0, vmax=1)
-        arr[l + 1, 2 * t + 1].set_xticks([])
-        arr[l + 1, 2 * t + 1].set_yticks([])
-        
-        residual = residual - draw_result
-        end_result = end_result + draw_result
+      
+      # Draw each channel
+      for c in range(3):
+        input_texture_channel = input_texture[:, :, c].squeeze() 
+        # Draw layers
+        residual = input_texture_channel
+        for l in range(n_layers):
+          if l == 0:
+            # Base coat
+            base_coat = np.quantile(input_texture_channel, 0.01)
+            M0 = (input_texture_channel >= base_coat).astype(np.float)
+            F0 = base_coat * M0
+            L_ref = ndimage.gaussian_filter(F0, sigma=config['write_radius'] / 2)
+          else:
+            # Get next layer
+            L_ref = get_next_layer(residual, config['write_radius'])
+          ideal_end_result[:, :, c] = ideal_end_result[:, :, c] + L_ref
+          
+          # Get patches of config['B'] x config['A'] size to draw
+          draw_result = np.zeros((FLAGS.draw_height, FLAGS.draw_width))
+          n_patches_a = FLAGS.draw_width / config['A']
+          n_patches_b = FLAGS.draw_height / config['B']
+          for p_b in range(n_patches_b):
+            for p_a in range(n_patches_a):
+              patch_row = config['B'] * p_b
+              patch_col = config['A'] * p_a
+              patch = L_ref[patch_row:patch_row + config['B'], patch_col:patch_col + config['A']]
+              xref = np.reshape(patch, (1, config['img_size']))
+              cref = np.zeros([1, config['img_size']])
+              
+              feed_dict = draw_model.get_feed_dict(xref, cref)
+              fetches = {'canvases': draw_model.cs.stack(), 'write_bbs': draw_model.write_bb.stack(),
+                         'write_times': draw_model.stop_times}
+              test_out = sess.run(fetches, feed_dict)
+              # results
+              canvases = np.concatenate(test_out['canvases'])  # T x img_size
+              write_bounding_boxes = np.reshape(np.array(test_out['write_bbs']), (config['T'], 4))  # T x 4
+              write_times = test_out['write_times']
+              
+              # export
+              export_draw_result_to_file(output_file, write_bounding_boxes)
+              
+              draw_result[patch_row:patch_row + config['B'], patch_col:patch_col + config['A']] = \
+                np.reshape(canvases[write_times - 1, :], (config['B'], config['A']))
+          
+          L_ref_viz = 1 - L_ref if not config['draw_with_white'] else L_ref
+          draw_result_viz = 1 - draw_result if not config['draw_with_white'] else draw_result
+          if not FLAGS.save_results_to_png:
+            arr[l + 1, 2 * t].imshow(L_ref_viz, cmap='gray', vmin=0, vmax=1)
+            arr[l + 1, 2 * t].set_xticks([])
+            arr[l + 1, 2 * t].set_yticks([])
+            arr[l + 1, 2 * t + 1].imshow(draw_result_viz, cmap='gray', vmin=0, vmax=1)
+            arr[l + 1, 2 * t + 1].set_xticks([])
+            arr[l + 1, 2 * t + 1].set_yticks([])
+          
+          residual = residual - draw_result
+          end_result[:, :, c] = end_result[:, :, c] + draw_result
       
       end_time = time.time()
       print("Time taken to draw texture #%d: %f" % (t + 1, end_time - start_time))
       input_texture_viz = 1 - input_texture if not config['draw_with_white'] else input_texture
       ideal_end_result_viz = 1 - ideal_end_result if not config['draw_with_white'] else ideal_end_result
       end_result_viz = 1 - end_result if not config['draw_with_white'] else end_result
-      # Ref texture
-      arr[0, 2 * t].imshow(input_texture_viz, cmap='gray', vmin=0, vmax=1)
-      arr[0, 2 * t].set_xticks([])
-      arr[0, 2 * t].set_yticks([])
-      # Ref texture
-      arr[0, 2 * t + 1].imshow(input_texture_viz, cmap='gray', vmin=0, vmax=1)
-      arr[0, 2 * t + 1].set_xticks([])
-      arr[0, 2 * t + 1].set_yticks([])
-      # best possible end result
-      arr[1 + n_layers, 2 * t].imshow(ideal_end_result_viz, cmap='gray', vmin=0, vmax=1)
-      arr[1 + n_layers, 2 * t].set_xticks([])
-      arr[1 + n_layers, 2 * t].set_yticks([])
-      # End result achieved
-      arr[1 + n_layers, 2 * t + 1].imshow(end_result_viz, cmap='gray', vmin=0, vmax=1)
-      arr[1 + n_layers, 2 * t + 1].set_xticks([])
-      arr[1 + n_layers, 2 * t + 1].set_yticks([])
+      if FLAGS.save_results_to_png:
+#         plt.clf()
+        plt.figure()  # figsize=(FLAGS.draw_width / 300.0, FLAGS.draw_height / 300.0), dpi=300)
+        plt.imshow(ideal_end_result_viz, vmin=0, vmax=1)
+        plt.xlim(0, FLAGS.draw_width)
+        plt.ylim(FLAGS.draw_height, 0)
+        plt.xticks([])
+        plt.yticks([])
+        savename = '%s/ideal_%s' % (FLAGS.output_dir, test_textures[t])
+        plt.savefig(savename, bbox_inches='tight', pad_inches=0)
+        plt.imshow(end_result_viz, vmin=0, vmax=1)
+        plt.savefig(os.path.join(FLAGS.output_dir, test_textures[t]), bbox_inches='tight', pad_inches=0)  # , dpi='figure')
+      else:
+        # Ref texture
+        arr[0, 2 * t].imshow(input_texture_viz, vmin=0, vmax=1)
+        arr[0, 2 * t].set_xticks([])
+        arr[0, 2 * t].set_yticks([])
+        # Ref texture
+        arr[0, 2 * t + 1].imshow(input_texture_viz, vmin=0, vmax=1)
+        arr[0, 2 * t + 1].set_xticks([])
+        arr[0, 2 * t + 1].set_yticks([])
+        # best possible end result
+        arr[1 + n_layers, 2 * t].imshow(ideal_end_result_viz, vmin=0, vmax=1)
+        arr[1 + n_layers, 2 * t].set_xticks([])
+        arr[1 + n_layers, 2 * t].set_yticks([])
+        # End result achieved
+        arr[1 + n_layers, 2 * t + 1].imshow(end_result_viz, vmin=0, vmax=1)
+        arr[1 + n_layers, 2 * t + 1].set_xticks([])
+        arr[1 + n_layers, 2 * t + 1].set_yticks([])
       
     plt.show()
     output_file.close()

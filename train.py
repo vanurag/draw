@@ -204,7 +204,9 @@ def main(config):
             saver.save(sess, os.path.join(config['model_dir'], 'drawmodel'), epoch)
         else:
           # Train discriminator
-          if draw_model.df_mode == 'dcgan':
+          if draw_model.df_mode == None:
+            n_d_train_steps = 0
+          elif draw_model.df_mode == 'dcgan':
             n_d_train_steps = 2
           else:
             n_d_train_steps = 5

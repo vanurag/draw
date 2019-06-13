@@ -64,7 +64,7 @@ class DrawModel(object):
       self.stop_writing_threshold = tf.Variable(0.99, trainable=False)
     
     # Discriminator
-    self.df_mode = 'dcgan'  # dcgan, wgan, or wgan-gp
+    self.df_mode = None  # dcgan, wgan, wgan-gp, or None
 #     self.y_dim = None
     self.df_dim = 64  # num filters in first conv layer
 #     self.dfc_dim = 1024  # fully connected layer units
@@ -86,10 +86,11 @@ class DrawModel(object):
     
     # Create a variable that stores how many training iterations we performed.
     # This is useful for saving/storing the network
-    self.global_step = tf.Variable(0, name='global_step', dtype=tf.int32, trainable=False)
-    
-    # Learning rate during training
-    self.learning_rate = tf.Variable(1e-4, trainable=False)
+    if self.mode is not 'inference':
+      self.global_step = tf.Variable(0, name='global_step', dtype=tf.int32, trainable=False)
+      
+      # Learning rate during training
+      self.learning_rate = tf.Variable(1e-4, trainable=False)
     
     if annealing_schedules is not None:
       for param, schedule in annealing_schedules.items():
@@ -558,108 +559,61 @@ class DrawModel(object):
         #############################################################
         # Reconstruction loss - Discriminator
         #############################################################
-        real_data = tf.concat([self.input_, self.input_], axis=1)
-        fake_data = tf.concat([x_recons, self.input_], axis=1)
-        D, D_logits = self.discriminator(tf.reshape(real_data, [self.batch_size, 1, 2 * self.B, self.A]),
-                                                    reuse=False if self.mode is 'training' else True)
-        D_, D__logits = self.discriminator(tf.reshape(fake_data, [self.batch_size, 1, 2 * self.B, self.A]),
-                                                      reuse=True)
-        tf.summary.histogram('Discriminator result on input', D, collections=[self.summary_collection])
-        tf.summary.histogram('Discriminator result on reconstruction', D_, collections=[self.summary_collection])
+        if self.df_mode is not None:
+          real_data = tf.concat([self.input_, self.input_], axis=1)
+          fake_data = tf.concat([x_recons, self.input_], axis=1)
+          D, D_logits = self.discriminator(tf.reshape(real_data, [self.batch_size, 1, 2 * self.B, self.A]),
+                                                      reuse=False if self.mode is 'training' else True)
+          D_, D__logits = self.discriminator(tf.reshape(fake_data, [self.batch_size, 1, 2 * self.B, self.A]),
+                                                        reuse=True)
+          tf.summary.histogram('Discriminator result on input', D, collections=[self.summary_collection])
+          tf.summary.histogram('Discriminator result on reconstruction', D_, collections=[self.summary_collection])
+          
+          if self.df_mode == 'wgan':
+            self.Lg = -tf.reduce_mean(D__logits)
+            self.d_loss = tf.reduce_mean(D__logits) - tf.reduce_mean(D_logits)
         
-        if self.df_mode == 'wgan':
-          self.Lg = -tf.reduce_mean(D__logits)
-          self.d_loss = tf.reduce_mean(D__logits) - tf.reduce_mean(D_logits)
-      
-#           gen_train_op = tf.train.RMSPropOptimizer(
-#               learning_rate=5e-5
-#           ).minimize(gen_cost, var_list=gen_params)
-#           disc_train_op = tf.train.RMSPropOptimizer(
-#               learning_rate=5e-5
-#           ).minimize(disc_cost, var_list=disc_params)
-        elif self.df_mode == 'wgan-gp':
-          self.Lg = -tf.reduce_mean(D__logits)
-          critic_loss = tf.reduce_mean(D__logits) - tf.reduce_mean(D_logits)
-          tf.summary.scalar('Critic Loss', critic_loss, collections=[self.summary_collection], family='loss')
-      
-          alpha = tf.random_uniform(
-            shape=[self.batch_size, 1],
-            minval=0.,
-            maxval=1.
-          )
-          differences = fake_data - real_data
-          interpolates = real_data + (alpha * differences)
-          gradients = tf.gradients(self.discriminator(interpolates), [interpolates])[0]
-          slopes = tf.sqrt(tf.reduce_sum(tf.square(gradients), reduction_indices=[1]))
-          gradient_penalty = tf.reduce_mean((slopes - 1.) ** 2)
-          tf.summary.scalar('Gradient penalty', gradient_penalty, collections=[self.summary_collection], family='loss')
-          self.d_loss = critic_loss + 10.0 * gradient_penalty
-      
-#           gen_train_op = tf.train.AdamOptimizer(
-#               learning_rate=1e-4,
-#               beta1=0.5,
-#               beta2=0.9
-#           ).minimize(gen_cost, var_list=gen_params)
-#           disc_train_op = tf.train.AdamOptimizer(
-#               learning_rate=1e-4,
-#               beta1=0.5,
-#               beta2=0.9
-#           ).minimize(disc_cost, var_list=disc_params)
-        elif self.df_mode == 'dcgan':
-          self.Lg = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
-            logits=D__logits,
-            labels=tf.ones_like(D__logits)
-          ))
-      
-          d_loss_fake = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
-            logits=D__logits,
-            labels=tf.zeros_like(D__logits)
-          ))
-          tf.summary.scalar('Discriminator Loss (fake)', d_loss_fake, collections=[self.summary_collection], family='loss')
-          d_loss_real = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
-            logits=D_logits,
-            labels=tf.ones_like(D_logits)
-          ))
-          tf.summary.scalar('Discriminator Loss (real)', d_loss_real, collections=[self.summary_collection], family='loss')
-          self.d_loss = (d_loss_real + d_loss_fake) / 2.
+          elif self.df_mode == 'wgan-gp':
+            self.Lg = -tf.reduce_mean(D__logits)
+            critic_loss = tf.reduce_mean(D__logits) - tf.reduce_mean(D_logits)
+            tf.summary.scalar('Critic Loss', critic_loss, collections=[self.summary_collection], family='loss')
         
-#             gen_train_op = tf.train.AdamOptimizer(
-#                 learning_rate=2e-4,
-#                 beta1=0.5
-#             ).minimize(gen_cost, var_list=gen_params)
-#             disc_train_op = tf.train.AdamOptimizer(
-#                 learning_rate=2e-4,
-#                 beta1=0.5
-#             ).minimize(disc_cost, var_list=disc_params)
+            alpha = tf.random_uniform(
+              shape=[self.batch_size, 1],
+              minval=0.,
+              maxval=1.
+            )
+            differences = fake_data - real_data
+            interpolates = real_data + (alpha * differences)
+            gradients = tf.gradients(self.discriminator(interpolates), [interpolates])[0]
+            slopes = tf.sqrt(tf.reduce_sum(tf.square(gradients), reduction_indices=[1]))
+            gradient_penalty = tf.reduce_mean((slopes - 1.) ** 2)
+            tf.summary.scalar('Gradient penalty', gradient_penalty, collections=[self.summary_collection], family='loss')
+            self.d_loss = critic_loss + 10.0 * gradient_penalty
         
-        # DCGAN
-#         d_loss_real = tf.reduce_mean(
-#           tf.nn.sigmoid_cross_entropy_with_logits(logits=D_logits, labels=tf.ones_like(D)))
-#         d_loss_fake = tf.reduce_mean(
-#           tf.nn.sigmoid_cross_entropy_with_logits(logits=D__logits, labels=tf.zeros_like(D_)))
-#         self.d_loss = d_loss_fake + d_loss_real
-#         tf.summary.scalar('Discriminator Loss (real)', d_loss_real, collections=[self.summary_collection], family='loss')
-#         tf.summary.scalar('Discriminator Loss (fake)', d_loss_fake, collections=[self.summary_collection], family='loss')
-#         tf.summary.scalar('Discriminator Loss', self.d_loss, collections=[self.summary_collection], family='loss')
-#         self.Lg = tf.reduce_mean(
-#           tf.nn.sigmoid_cross_entropy_with_logits(logits=D__logits, labels=tf.ones_like(D_)))
-#         tf.summary.scalar('Generator Loss', self.Lg, collections=[self.summary_collection], family='loss')
-        # WGAN - GP
-#         critic_loss = tf.reduce_mean(D__logits) - tf.reduce_mean(D_logits)
-#         alpha = tf.random_uniform([self.batch_size, 1], minval=0.0, maxval=1.0)
-#         differences = fake_data - real_data
-#         interpolates = real_data + (alpha * differences)
-#         diff_probs, diff_logits = self.discriminator(tf.reshape(interpolates, [self.batch_size, 2 * self.B, self.A, 1]),
-#                                                      reuse=True)
-#         gradients = tf.gradients(diff_logits, [interpolates])[0]
-#         slopes = tf.sqrt(1e-8 + tf.reduce_sum(tf.square(gradients), reduction_indices=[1]))
-#         gradient_penalty = tf.reduce_mean((slopes - 1.) ** 2)
-#         self.d_loss = critic_loss + 10.0 * gradient_penalty
-#         tf.summary.scalar('Critic Loss', critic_loss, collections=[self.summary_collection], family='loss')
-#         tf.summary.scalar('Gradient penalty', gradient_penalty, collections=[self.summary_collection], family='loss')
-        tf.summary.scalar('Discriminator Loss', self.d_loss, collections=[self.summary_collection], family='loss')
-#         self.Lg = -tf.reduce_mean(D__logits)
-        tf.summary.scalar('Generator Loss', self.Lg, collections=[self.summary_collection], family='loss')
+          elif self.df_mode == 'dcgan':
+            self.Lg = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
+              logits=D__logits,
+              labels=tf.ones_like(D__logits)
+            ))
+        
+            d_loss_fake = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
+              logits=D__logits,
+              labels=tf.zeros_like(D__logits)
+            ))
+            tf.summary.scalar('Discriminator Loss (fake)', d_loss_fake, collections=[self.summary_collection], family='loss')
+            d_loss_real = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
+              logits=D_logits,
+              labels=tf.ones_like(D_logits)
+            ))
+            tf.summary.scalar('Discriminator Loss (real)', d_loss_real, collections=[self.summary_collection], family='loss')
+            self.d_loss = (d_loss_real + d_loss_fake) / 2.
+          
+          tf.summary.scalar('Discriminator Loss', self.d_loss, collections=[self.summary_collection], family='loss')
+          tf.summary.scalar('Generator Loss', self.Lg, collections=[self.summary_collection], family='loss')
+        else:
+          self.Lg = tf.zeros(1)
+          self.d_loss = tf.zeros(1)
         
         #############################################################
         # Latent loss
@@ -763,8 +717,7 @@ class DrawModel(object):
         #############################################################
         # Total loss
         #############################################################
-#         self.loss = self.Lx + self.Lz + self.Lwrite  # + self.Lintensity
-        self.loss = self.Lx + self.Lg + self.Lz  # + self.Lwrite  + self.Lintensity
+        self.loss = self.Lx + (self.Lg if self.df_mode is not None else 0.0) + self.Lz + self.Lwrite + self.Lintensity
         tf.summary.scalar('Total Loss', self.loss, collections=[self.summary_collection], family='loss')
         
   def build_optim(self):
@@ -788,25 +741,26 @@ class DrawModel(object):
       self.train_op = optimizer.apply_gradients(grads, global_step=self.global_step)
       
       # Discriminator
-      d_optimizer = tf.train.AdamOptimizer(learning_rate=1e-4, beta1=0.5, beta2=0.9)
-
-      # clip weights
-      clip_ops = []
-      for var in tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='discriminator'):
-        clip_bounds = [-.01, .01]
-        clip_ops.append(
-          tf.assign(
-            var,
-            tf.clip_by_value(var, clip_bounds[0], clip_bounds[1])
+      if self.df_mode is not None:
+        d_optimizer = tf.train.AdamOptimizer(learning_rate=1e-4, beta1=0.5, beta2=0.9)
+  
+        # clip weights
+        clip_ops = []
+        for var in tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='discriminator'):
+          clip_bounds = [-.01, .01]
+          clip_ops.append(
+            tf.assign(
+              var,
+              tf.clip_by_value(var, clip_bounds[0], clip_bounds[1])
+              )
             )
-          )
-      self.clip_disc_weights = tf.group(*clip_ops)
-    
-      d_grads = optimizer.compute_gradients(self.d_loss)
-#       for i, (g, v) in enumerate(d_grads):
-#         if g is not None:
-#           grads[i] = (tf.clip_by_norm(g, 1.0), v)  # clip gradients
-      self.d_train_op = d_optimizer.apply_gradients(d_grads)
+        self.clip_disc_weights = tf.group(*clip_ops)
+      
+        d_grads = optimizer.compute_gradients(self.d_loss)
+  #       for i, (g, v) in enumerate(d_grads):
+  #         if g is not None:
+  #           grads[i] = (tf.clip_by_norm(g, 1.0), v)  # clip gradients
+        self.d_train_op = d_optimizer.apply_gradients(d_grads)
   
   def count_parameters(self):
     """
