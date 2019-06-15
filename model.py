@@ -381,11 +381,11 @@ class DrawModel(object):
 #       should_write_decision = should_write_decision.write(t, tf.nn.sigmoid(sw_log_odd))
     if self.draw_with_white:
       scs = scs.write(t, tf.transpose(\
-        tf.reshape(cs.read(t)[:self.n_summary_per_batch, :], \
+        tf.reshape(tf.nn.tanh(cs.read(t)[:self.n_summary_per_batch, :]), \
                    [self.n_summary_per_batch, self.B, self.A]), perm=[1, 0, 2]))  # B x batch_size x A
     else:
       scs = scs.write(t, tf.transpose(\
-        tf.reshape(1 - cs.read(t)[:self.n_summary_per_batch, :], \
+        tf.reshape(1 - tf.nn.tanh(cs.read(t)[:self.n_summary_per_batch, :]), \
                    [self.n_summary_per_batch, self.B, self.A]), perm=[1, 0, 2]))  # B x batch_size x A
     write_bb = write_bb.write(t, write_output[1])
     h_dec_prev = h_dec

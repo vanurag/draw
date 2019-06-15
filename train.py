@@ -151,7 +151,15 @@ def main(config):
         if (previous_epoch > 0 and epoch == 0): break
         
         step = tf.train.global_step(sess, draw_model.global_step)
-  
+        
+        # Mask border
+        if config['mask_border']:
+          xmask = np.copy(xnext)
+          xmask = xmask.reshape((config['batch_size'], config['B'], config['A']))
+          xmask[:, config['write_radius']:config['B'] - config['write_radius'],
+                config['write_radius']:config['A'] - config['write_radius']] = 0.0
+          xnext -= np.reshape(xmask, (config['batch_size'], config['img_size']))
+          
         # Hot start
         if config['use_hot_start']:
           crop_fraction = (epoch + 1) * config['crop_fraction_increase_rate']
