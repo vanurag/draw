@@ -8,6 +8,7 @@ Author: Anurag Vempati
 """
 
 import os
+import re
 import tensorflow as tf
 import numpy as np
 import sys
@@ -15,12 +16,19 @@ from scipy import ndimage
 import time
 import math
 
+import rospy
+from paintcopter_planning_msgs.msg import NozzleState
+from geometry_msgs.msg import Transform 
+
 from config import texture_config
 from train import get_model_and_placeholders
 import matplotlib.pyplot as plt
+from tensorflow.python.ops.gen_data_flow_ops import _queue_size
 
-tf.flags.DEFINE_string("test_dir", "", "")
-tf.flags.DEFINE_string("output_dir", "", "")
+tf.flags.DEFINE_string("test_dir", "", "Directory containing test files")
+tf.flags.DEFINE_string("output_dir", "", "Directory to store outputs")
+tf.flags.DEFINE_string("pixel_face_ids_file", "", "Face-id corresponding to each pixel location")
+tf.flags.DEFINE_string("face_list_file", "", "List of face locations")
 tf.flags.DEFINE_integer("draw_width", -1, "Resize images to this width before processing. Input image width chosen if negative.")
 tf.flags.DEFINE_integer("draw_height", -1, "Resize images to this height before processing. Input image height chosen if negative.")
 tf.flags.DEFINE_bool("save_results_to_png", False, "Save individual draw result as a png")
@@ -48,7 +56,7 @@ def load_data(img_width, img_height, flip_image, data_dir):
     return_image = image_flattened
     if flip_image:  # not config['draw_with_white']:
       return_image = 1.0 - image_flattened
-    return_image = tf.clip_by_value(return_image, 0.0, 0.99)  # for numeric stability during arctanh() operation
+#     return_image = tf.clip_by_value(return_image, 0.0, 0.99)  # for numeric stability during arctanh() operation
     return return_image, tf.shape(image_resized)
 
   train_directory = data_dir
@@ -56,11 +64,11 @@ def load_data(img_width, img_height, flip_image, data_dir):
     print("Train data not found")
     sys.exit()
   train_files = tf.gfile.ListDirectory(train_directory)
+  train_files = [train_files[i] for i in np.arange(len(train_files)) if 
+                 re.match("^.*.png$", train_files[i]) or re.match("^.*.jpg$", train_files[i])]
 #   train_files = train_files[:10000]
-  print('Loading dataset with {} images'.format(len(train_files)))
-  idx = np.arange(len(train_files))
-#   np.random.shuffle(idx)
-  train_filenames = [os.path.join(train_directory, train_files[i]) for i in idx]
+  train_filenames = [os.path.join(train_directory, train_files[i]) for i in np.arange(len(train_files))]
+  print('Loading dataset with {} images'.format(len(train_filenames)))
   
   train_dataset = tf.data.Dataset.from_tensor_slices(train_filenames)
   train_dataset = train_dataset.map(_parse_function)
@@ -84,17 +92,90 @@ def get_next_layer(residual, write_radius):
   return L
 
 
+def load_mesh_data(pixel_face_ids_file, face_list_file):
+  global pixel_face_ids, face_positions 
+  fids = open(pixel_face_ids_file, "r")
+  pixel_face_ids = np.loadtxt(fids, np.int32)
+#   print(pixel_face_ids.shape)
+  flist = open(face_list_file, "r")
+  face_positions = np.loadtxt(flist)
+#   print(face_positions.shape)
+  return pixel_face_ids, face_positions
+
+
 def export_draw_result_to_file(file_handle, write_bbs):
-  for t in range(len(write_bbs)):
-    # x, y, spray-radius, paint-thickness 
-    print >> file_handle, "%4f %4f %4f %4f" % (write_bbs[t, 0], write_bbs[t, 1], write_bbs[t, 2] / 2., write_bbs[t, 3])
+  for t in range(write_bbs.shape[0]):
+    # row, col, spray-radius, paint-thickness 
+    print >> file_handle, "%4f %4f %4f %4f" % (write_bbs[t, 1], write_bbs[t, 0], write_bbs[t, 2] / 2., write_bbs[t, 3])
+  print >> file_handle, "\n\n"
   return
+
+
+def publish_nozzle_commands(write_bbs):
+  global pixel_face_ids, face_positions 
+  pub = rospy.Publisher('nozzle_state', NozzleState, queue_size=10)
+  publish_rate = rospy.Rate(30)
+  time_per_state = 0.1
+  nozzle_cmd = NozzleState()
+  nozzle_cmd.aperture_open = True
+  t = 0
+  last_update_time = rospy.get_rostime()
+  while t < write_bbs.shape[0]:
+    if write_bbs[t, 3] < 0.5:
+      t += 1
+      continue
+    nozzle_cmd.header.stamp = rospy.get_rostime()
+    nozzle_cmd.pose = Transform()
+    
+    pixel_r = min(int(np.floor(write_bbs[t, 1])), FLAGS.draw_height - 1)
+    pixel_c = min(int(np.floor(write_bbs[t, 0])), FLAGS.draw_width - 1)
+    fid = pixel_face_ids[pixel_r, pixel_c]
+    if fid < 0:
+      t += 1
+      continue
+    nozzle_cmd.pose.translation.x = face_positions[fid, 0]
+    nozzle_cmd.pose.translation.y = face_positions[fid, 1] - 0.2
+    nozzle_cmd.pose.translation.z = face_positions[fid, 2]
+#     nozzle_cmd.pose.translation.x = -2.29
+#     nozzle_cmd.pose.translation.y = 1.553 - 0.2
+#     nozzle_cmd.pose.translation.z = 3.30
+    
+    # X axis of the nozzle is the direction of spray
+    nozzle_cmd.pose.rotation.w = 0.7071
+    nozzle_cmd.pose.rotation.x = 0.
+    nozzle_cmd.pose.rotation.y = 0.
+    nozzle_cmd.pose.rotation.z = 0.7071
+    
+    nozzle_cmd.nozzle_flow_scaling = write_bbs[t, 3];
+    
+    pub.publish(nozzle_cmd)
+    publish_rate.sleep()
+    
+    if (rospy.get_rostime() - last_update_time).to_sec() > time_per_state:
+      t += 1
+      last_update_time = rospy.get_rostime()
+    
+  nozzle_cmd.aperture_open = False
+  pub.publish(nozzle_cmd)
 
   
 def main(config):
+  # ROS node
+  rospy.init_node('draw_texture')
+  
   # Load texture image
   test_textures, next_texture, next_texture_shape = load_data(
     FLAGS.draw_width, FLAGS.draw_height, not config['draw_with_white'], FLAGS.test_dir)
+  
+  # Load mesh data
+  if not os.path.isfile(os.path.join(FLAGS.test_dir, FLAGS.pixel_face_ids_file)):
+    print("Pixel face-ids file doesn't exist")
+    sys.exit()
+  if not os.path.isfile(os.path.join(FLAGS.test_dir, FLAGS.face_list_file)):
+    print("Face list file doesn't exist")
+    sys.exit()
+  load_mesh_data(os.path.join(FLAGS.test_dir, FLAGS.pixel_face_ids_file),
+                 os.path.join(FLAGS.test_dir, FLAGS.face_list_file))
   
   # Create output file for exporting result
   if not os.path.exists(FLAGS.output_dir):
@@ -149,6 +230,7 @@ def main(config):
         input_texture_channel = input_texture[:, :, c].squeeze() 
         # Draw layers
         residual = input_texture_channel
+        residual_ideal = input_texture_channel
         for l in range(n_layers):
           if l == 0:
             # Base coat
@@ -156,21 +238,27 @@ def main(config):
             M0 = (input_texture_channel >= base_coat).astype(np.float)
             F0 = base_coat * M0
             L_ref = ndimage.gaussian_filter(F0, sigma=config['write_radius'] / 2)
+            L_ref_ideal = L_ref
           else:
             # Get next layer
             L_ref = get_next_layer(residual, config['write_radius'])
-          ideal_end_result[:, :, c] = ideal_end_result[:, :, c] + L_ref
+            L_ref_ideal = get_next_layer(residual_ideal, config['write_radius'])
+          ideal_end_result[:, :, c] = ideal_end_result[:, :, c] + L_ref_ideal
           
           # Get patches of config['B'] x config['A'] size to draw
           draw_result = np.zeros((FLAGS.draw_height, FLAGS.draw_width))
-          n_patches_a = int((FLAGS.draw_width - padding_percent * config['A']) // (config['A'] * (1 - padding_percent)))
-          n_patches_b = int((FLAGS.draw_height - padding_percent * config['B']) // (config['B'] * (1 - padding_percent)))
+          n_patches_a = int(np.ceil((FLAGS.draw_width - padding_percent * config['A']) / (config['A'] * (1 - padding_percent))))
+          n_patches_b = int(np.ceil((FLAGS.draw_height - padding_percent * config['B']) / (config['B'] * (1 - padding_percent))))
           for p_b in range(n_patches_b):
             for p_a in range(n_patches_a):
-              patch_row = int(p_b * config['B'] * (1 - padding_percent))
-              patch_col = int(p_a * config['A'] * (1 - padding_percent))
-              patch = L_ref[patch_row:patch_row + config['B'], patch_col:patch_col + config['A']] - \
-                np.tanh(draw_result[patch_row:patch_row + config['B'], patch_col:patch_col + config['A']]) 
+              patch_start_row = int(p_b * config['B'] * (1 - padding_percent))
+              patch_end_row = min([patch_start_row + config['B'], FLAGS.draw_height])
+              patch_start_col = int(p_a * config['A'] * (1 - padding_percent))
+              patch_end_col = min([patch_start_col + config['A'], FLAGS.draw_width])
+              patch = np.zeros([config['B'], config['A']])
+              patch[:patch_end_row - patch_start_row, :patch_end_col - patch_start_col] = \
+                L_ref[patch_start_row:patch_end_row, patch_start_col:patch_end_col] - \
+                np.tanh(draw_result[patch_start_row:patch_end_row, patch_start_col:patch_end_col]) 
               xref = np.reshape(patch, (1, config['img_size']))
               cref = np.zeros([1, config['img_size']])
 #               cref = np.reshape(draw_result[patch_row:patch_row + config['B'], patch_col:patch_col + config['A']],
@@ -182,14 +270,19 @@ def main(config):
               test_out = sess.run(fetches, feed_dict)
               # results
               canvases = np.concatenate(test_out['canvases'])  # T x img_size
-              write_bounding_boxes = np.reshape(np.array(test_out['write_bbs']), (config['T'], 4))  # T x 4
-              write_times = test_out['write_times']
+              write_bounding_boxes = np.array(test_out['write_bbs']).squeeze()  # T x 4
+              write_bounding_boxes[:, 0] += patch_start_col
+              write_bounding_boxes[:, 1] += patch_start_row
+              write_times = test_out['write_times'][0]
+              write_bounding_boxes = write_bounding_boxes[:write_times, :]
               
               # export
               export_draw_result_to_file(output_file, write_bounding_boxes)
+              # publish
+              publish_nozzle_commands(write_bounding_boxes)
               
-              draw_result[patch_row:patch_row + config['B'], patch_col:patch_col + config['A']] += \
-                np.reshape(canvases[write_times - 1, :], (config['B'], config['A']))
+              draw_result[patch_start_row:patch_end_row, patch_start_col:patch_end_col] += \
+                np.reshape(canvases[write_times - 1, :], (config['B'], config['A']))[:patch_end_row - patch_start_row, :patch_end_col - patch_start_col]
 #               L_ref[patch_row:patch_row + config['B'], patch_col:patch_col + config['A']] -= \
 #                 np.tanh(draw_result[patch_row:patch_row + config['B'], patch_col:patch_col + config['A']])
 #               np.clip(L_ref, 0, 1, L_ref)
@@ -204,7 +297,8 @@ def main(config):
             arr[l + 1, 2 * t + 1].set_xticks([])
             arr[l + 1, 2 * t + 1].set_yticks([])
           
-          residual = residual - L_ref  # np.tanh(draw_result)
+          residual = residual - np.tanh(draw_result)
+          residual_ideal = residual_ideal - L_ref
 #           np.clip(residual, 0, 1, residual)
           end_result[:, :, c] += draw_result
 #           np.clip(end_result, 0, 1, end_result)
