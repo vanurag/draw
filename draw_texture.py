@@ -16,6 +16,8 @@ from scipy import ndimage
 import time
 import math
 
+from scipy.spatial.transform import Rotation as R
+
 import rospy
 from paintcopter_planning_msgs.msg import NozzleState
 from geometry_msgs.msg import Transform 
@@ -93,14 +95,14 @@ def get_next_layer(residual, write_radius):
 
 
 def load_mesh_data(pixel_face_ids_file, face_list_file):
-  global pixel_face_ids, face_positions 
+  global pixel_face_ids, face_orientation 
   fids = open(pixel_face_ids_file, "r")
   pixel_face_ids = np.loadtxt(fids, np.int32)
 #   print(pixel_face_ids.shape)
   flist = open(face_list_file, "r")
-  face_positions = np.loadtxt(flist)
-#   print(face_positions.shape)
-  return pixel_face_ids, face_positions
+  face_orientation = np.loadtxt(flist)
+#   print(face_orientation.shape)
+  return pixel_face_ids, face_orientation
 
 
 def export_draw_result_to_file(file_handle, write_bbs):
@@ -112,16 +114,45 @@ def export_draw_result_to_file(file_handle, write_bbs):
 
 
 def publish_nozzle_commands(write_bbs):
-  global pixel_face_ids, face_positions 
+
+  # Spray on a specific face (x,y,z,nx,ny,nz)
+  def _spray_face(face, flow_scaling, spray_rate):
+    # X axis of the nozzle is the direction of spray
+    face_normal = face[3:]
+    if not np.isclose(np.linalg.norm(face_normal), 1., atol=1e-2):
+      flow_scaling = 0.0
+#     print(face_orientation[fid, :])
+#     face_normal = np.array([0, -1, 0])
+#     nozzle_orientation = np.array([[0, -1, 0], [1, 0, 0], [0, 0, 1]])
+    nozzle_orientation = np.array([-face_normal, np.cross([0, 0, 1], -face_normal), [0, 0, 1]])
+    nozzle_orientation = np.transpose(nozzle_orientation)
+    n_q = R.from_dcm(nozzle_orientation).as_quat()
+    nozzle_cmd.pose.rotation.w = n_q[3]
+    nozzle_cmd.pose.rotation.x = n_q[0]
+    nozzle_cmd.pose.rotation.y = n_q[1]
+    nozzle_cmd.pose.rotation.z = n_q[2]
+    
+    nozzle_cmd.pose.translation.x = face[0] + 0.2 * face_normal[0]
+    nozzle_cmd.pose.translation.y = face[1] + 0.2 * face_normal[1]
+    nozzle_cmd.pose.translation.z = face[2] + 0.2 * face_normal[2]
+    
+    nozzle_cmd.nozzle_flow_scaling = flow_scaling;
+    
+    pub.publish(nozzle_cmd)
+    spray_rate.sleep()
+    
+  global pixel_face_ids, face_orientation 
   pub = rospy.Publisher('nozzle_state', NozzleState, queue_size=10)
-  publish_rate = rospy.Rate(30)
-  time_per_state = 0.1
+  publish_rate = rospy.Rate(10)
   nozzle_cmd = NozzleState()
   nozzle_cmd.aperture_open = True
+  prev_t = 0
   t = 0
-  last_update_time = rospy.get_rostime()
+  prev_fid = -1
+  fid = -1
+#   last_update_time = rospy.get_rostime()
   while t < write_bbs.shape[0]:
-    if write_bbs[t, 3] < 0.5:
+    if write_bbs[t, 3] < 0.3:
       t += 1
       continue
     nozzle_cmd.header.stamp = rospy.get_rostime()
@@ -129,31 +160,43 @@ def publish_nozzle_commands(write_bbs):
     
     pixel_r = min(int(np.floor(write_bbs[t, 1])), FLAGS.draw_height - 1)
     pixel_c = min(int(np.floor(write_bbs[t, 0])), FLAGS.draw_width - 1)
-    fid = pixel_face_ids[pixel_r, pixel_c]
-    if fid < 0:
+    
+    if pixel_face_ids[pixel_r, pixel_c] < 0:
       t += 1
       continue
-    nozzle_cmd.pose.translation.x = face_positions[fid, 0]
-    nozzle_cmd.pose.translation.y = face_positions[fid, 1] - 0.2
-    nozzle_cmd.pose.translation.z = face_positions[fid, 2]
-#     nozzle_cmd.pose.translation.x = -2.29
-#     nozzle_cmd.pose.translation.y = 1.553 - 0.2
-#     nozzle_cmd.pose.translation.z = 3.30
     
-    # X axis of the nozzle is the direction of spray
-    nozzle_cmd.pose.rotation.w = 0.7071
-    nozzle_cmd.pose.rotation.x = 0.
-    nozzle_cmd.pose.rotation.y = 0.
-    nozzle_cmd.pose.rotation.z = 0.7071
+    prev_fid = fid
+    fid = pixel_face_ids[pixel_r, pixel_c]
     
-    nozzle_cmd.nozzle_flow_scaling = write_bbs[t, 3];
+    # interpolate
+#     if prev_fid > 0:
+#       jump = np.linalg.norm(face_orientation[fid, :3] - face_orientation[prev_fid, :3])
+#       jump_intensity = write_bbs[t, 3] - write_bbs[prev_t, 3]
+#       delta = 0.01  # 0.1 = 2*spray_radius
+#       if jump > delta and jump < 0.5:
+#         jump_dir = (face_orientation[fid, :3] - face_orientation[prev_fid, :3]) / jump
+#         n_interpolate = (np.floor(np.linalg.norm(jump) / delta)).astype(int)
+#         for i in range(n_interpolate):
+# #           print(jump_dir)
+# #           print(face_orientation[prev_fid])
+# #           print(face_orientation[prev_fid, :3])
+# #           print((i + 1) * delta * jump_dir)
+# #           print(face_orientation[prev_fid, 3:])
+# #           print(face_orientation[prev_fid, :3] + (i + 1) * delta * jump_dir)
+# #           print(face_orientation[prev_fid, 3:])
+#           int_face = np.concatenate(((face_orientation[prev_fid, :3] + (i + 1) * delta * jump_dir),
+#                                      face_orientation[prev_fid, 3:]))
+#           int_intensity = write_bbs[prev_t, 3] + ((i + 1) * jump_intensity / n_interpolate)
+#           print(int_face)
+#           _spray_face(int_face, int_intensity, publish_rate)
+      
+    _spray_face(face_orientation[fid, :], write_bbs[t, 3], publish_rate)
     
-    pub.publish(nozzle_cmd)
-    publish_rate.sleep()
-    
-    if (rospy.get_rostime() - last_update_time).to_sec() > time_per_state:
-      t += 1
-      last_update_time = rospy.get_rostime()
+#     if (rospy.get_rostime() - last_update_time).to_sec() > time_per_state:
+#       t += 1
+#       last_update_time = rospy.get_rostime()
+    prev_t = t
+    t += 1
     
   nozzle_cmd.aperture_open = False
   pub.publish(nozzle_cmd)
