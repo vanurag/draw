@@ -16,6 +16,7 @@ from scipy import ndimage
 import time
 import math
 
+from scipy.spatial import Delaunay
 from scipy.spatial.transform import Rotation as R
 
 import rospy
@@ -29,8 +30,8 @@ from tensorflow.python.ops.gen_data_flow_ops import _queue_size
 
 tf.flags.DEFINE_string("test_dir", "", "Directory containing test files")
 tf.flags.DEFINE_string("output_dir", "", "Directory to store outputs")
-tf.flags.DEFINE_string("pixel_face_ids_file", "", "Face-id corresponding to each pixel location")
-tf.flags.DEFINE_string("face_list_file", "", "List of face locations")
+tf.flags.DEFINE_string("uv_vertices_file", "", "UV vertices of mesh")
+tf.flags.DEFINE_string("vertices_file", "", "List of mesh vertices in 3D")
 tf.flags.DEFINE_integer("draw_width", -1, "Resize images to this width before processing. Input image width chosen if negative.")
 tf.flags.DEFINE_integer("draw_height", -1, "Resize images to this height before processing. Input image height chosen if negative.")
 tf.flags.DEFINE_bool("save_results_to_png", False, "Save individual draw result as a png")
@@ -94,15 +95,18 @@ def get_next_layer(residual, write_radius):
   return L
 
 
-def load_mesh_data(pixel_face_ids_file, face_list_file):
-  global pixel_face_ids, face_orientation 
-  fids = open(pixel_face_ids_file, "r")
-  pixel_face_ids = np.loadtxt(fids, np.int32)
-#   print(pixel_face_ids.shape)
-  flist = open(face_list_file, "r")
-  face_orientation = np.loadtxt(flist)
-#   print(face_orientation.shape)
-  return pixel_face_ids, face_orientation
+def load_mesh_data(uv_list_file, vert_list_file):
+  global uv_data, vert_data, D_tri, D_tri_ids
+  uv_list = open(uv_list_file, "r")
+  uv_data = np.loadtxt(uv_list)  # V x 2
+#   print(uv_data.shape)
+  D_tri = Delaunay(uv_data)
+  D_tri_ids = D_tri.simplices
+
+  vlist = open(vert_list_file, "r")
+  vert_data = np.loadtxt(vlist)  # V x 3
+#   print(vert_data.shape)
+  return uv_data, vert_data
 
 
 def export_draw_result_to_file(file_handle, write_bbs):
@@ -121,11 +125,11 @@ def publish_nozzle_commands(write_bbs):
     face_normal = face[3:]
     if not np.isclose(np.linalg.norm(face_normal), 1., atol=1e-2):
       flow_scaling = 0.0
-#     print(face_orientation[fid, :])
-#     face_normal = np.array([0, -1, 0])
-#     nozzle_orientation = np.array([[0, -1, 0], [1, 0, 0], [0, 0, 1]])
-    nozzle_orientation = np.array([-face_normal, np.cross([0, 0, 1], -face_normal), [0, 0, 1]])
-    nozzle_orientation = np.transpose(nozzle_orientation)
+#     print(face_data[fid, :])
+    face_normal = np.array([0, -1, 0])
+    nozzle_orientation = np.array([[0, -1, 0], [1, 0, 0], [0, 0, 1]])
+#     nozzle_orientation = np.array([-face_normal, np.cross([0, 0, 1], -face_normal), [0, 0, 1]])
+#     nozzle_orientation = np.transpose(nozzle_orientation)
     n_q = R.from_dcm(nozzle_orientation).as_quat()
     nozzle_cmd.pose.rotation.w = n_q[3]
     nozzle_cmd.pose.rotation.x = n_q[0]
@@ -141,7 +145,7 @@ def publish_nozzle_commands(write_bbs):
     pub.publish(nozzle_cmd)
     spray_rate.sleep()
     
-  global pixel_face_ids, face_orientation 
+  global pixel_face_ids, vert_data, D_tri, D_tri_ids
   pub = rospy.Publisher('nozzle_state', NozzleState, queue_size=10)
   publish_rate = rospy.Rate(10)
   nozzle_cmd = NozzleState()
@@ -158,39 +162,58 @@ def publish_nozzle_commands(write_bbs):
     nozzle_cmd.header.stamp = rospy.get_rostime()
     nozzle_cmd.pose = Transform()
     
-    pixel_r = min(int(np.floor(write_bbs[t, 1])), FLAGS.draw_height - 1)
-    pixel_c = min(int(np.floor(write_bbs[t, 0])), FLAGS.draw_width - 1)
+#     pixel_r = min(int(np.floor(write_bbs[t, 1])), FLAGS.draw_height - 1)
+#     pixel_c = min(int(np.floor(write_bbs[t, 0])), FLAGS.draw_width - 1)
     
-    if pixel_face_ids[pixel_r, pixel_c] < 0:
+    # Find barycentric coordinates of (u = write_bbs[t, 0], v = FLAGS.draw_height-write_bbs[t, 1])
+    spray_point_uv = np.array([write_bbs[t, 0], FLAGS.draw_height - write_bbs[t, 1]])
+    tri_id = D_tri.find_simplex(spray_point_uv)
+    if tri_id < 0:
       t += 1
       continue
+    b = D_tri.transform[tri_id, :2].dot(np.transpose(spray_point_uv - D_tri.transform[tri_id, 2]))
+    bcoords = np.append(b, 1 - b.sum())
+    spray_point = bcoords[0] * vert_data[D_tri_ids[tri_id, 0]] + \
+                  bcoords[1] * vert_data[D_tri_ids[tri_id, 1]] + \
+                  bcoords[2] * vert_data[D_tri_ids[tri_id, 2]]
+    
+    # spray normal
+    spray_normal = np.cross((vert_data[D_tri_ids[tri_id, 1]] - vert_data[D_tri_ids[tri_id, 0]]),
+                             vert_data[D_tri_ids[tri_id, 2]] - vert_data[D_tri_ids[tri_id, 0]])
+    spray_normal /= np.linalg.norm(spray_normal)
+    spray_face = np.append(spray_point, spray_normal)
+#     print('spray_face: ', spray_face)
+    
+#     if pixel_face_ids[pixel_r, pixel_c] < 0:
+#       t += 1
+#       continue
     
     prev_fid = fid
-    fid = pixel_face_ids[pixel_r, pixel_c]
+#     fid = pixel_face_ids[pixel_r, pixel_c]
     
     # interpolate
 #     if prev_fid > 0:
-#       jump = np.linalg.norm(face_orientation[fid, :3] - face_orientation[prev_fid, :3])
+#       jump = np.linalg.norm(face_data[fid, :3] - face_data[prev_fid, :3])
 #       jump_intensity = write_bbs[t, 3] - write_bbs[prev_t, 3]
 #       delta = 0.01  # 0.1 = 2*spray_radius
 #       if jump > delta and jump < 0.5:
-#         jump_dir = (face_orientation[fid, :3] - face_orientation[prev_fid, :3]) / jump
+#         jump_dir = (face_data[fid, :3] - face_data[prev_fid, :3]) / jump
 #         n_interpolate = (np.floor(np.linalg.norm(jump) / delta)).astype(int)
 #         for i in range(n_interpolate):
 # #           print(jump_dir)
-# #           print(face_orientation[prev_fid])
-# #           print(face_orientation[prev_fid, :3])
+# #           print(face_data[prev_fid])
+# #           print(face_data[prev_fid, :3])
 # #           print((i + 1) * delta * jump_dir)
-# #           print(face_orientation[prev_fid, 3:])
-# #           print(face_orientation[prev_fid, :3] + (i + 1) * delta * jump_dir)
-# #           print(face_orientation[prev_fid, 3:])
-#           int_face = np.concatenate(((face_orientation[prev_fid, :3] + (i + 1) * delta * jump_dir),
-#                                      face_orientation[prev_fid, 3:]))
+# #           print(face_data[prev_fid, 3:])
+# #           print(face_data[prev_fid, :3] + (i + 1) * delta * jump_dir)
+# #           print(face_data[prev_fid, 3:])
+#           int_face = np.concatenate(((face_data[prev_fid, :3] + (i + 1) * delta * jump_dir),
+#                                      face_data[prev_fid, 3:]))
 #           int_intensity = write_bbs[prev_t, 3] + ((i + 1) * jump_intensity / n_interpolate)
 #           print(int_face)
 #           _spray_face(int_face, int_intensity, publish_rate)
       
-    _spray_face(face_orientation[fid, :], write_bbs[t, 3], publish_rate)
+    _spray_face(spray_face, write_bbs[t, 3], publish_rate)
     
 #     if (rospy.get_rostime() - last_update_time).to_sec() > time_per_state:
 #       t += 1
@@ -211,14 +234,14 @@ def main(config):
     FLAGS.draw_width, FLAGS.draw_height, not config['draw_with_white'], FLAGS.test_dir)
   
   # Load mesh data
-  if not os.path.isfile(os.path.join(FLAGS.test_dir, FLAGS.pixel_face_ids_file)):
-    print("Pixel face-ids file doesn't exist")
+  if not os.path.isfile(os.path.join(FLAGS.test_dir, FLAGS.vertices_file)):
+    print("3D vertices file doesn't exist")
     sys.exit()
-  if not os.path.isfile(os.path.join(FLAGS.test_dir, FLAGS.face_list_file)):
-    print("Face list file doesn't exist")
+  if not os.path.isfile(os.path.join(FLAGS.test_dir, FLAGS.uv_vertices_file)):
+    print("UV vertices file doesn't exist")
     sys.exit()
-  load_mesh_data(os.path.join(FLAGS.test_dir, FLAGS.pixel_face_ids_file),
-                 os.path.join(FLAGS.test_dir, FLAGS.face_list_file))
+  load_mesh_data(os.path.join(FLAGS.test_dir, FLAGS.uv_vertices_file),
+                 os.path.join(FLAGS.test_dir, FLAGS.vertices_file))
   
   # Create output file for exporting result
   if not os.path.exists(FLAGS.output_dir):
