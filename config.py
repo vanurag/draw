@@ -73,7 +73,7 @@ train_config['n_enc_layers'] = 1  # number of layers in encoder LSTM
 train_config['dec_rnn_mode'] = 'BASIC'  # The low level implementation of lstm cell. choose between "BASIC", "BLOCK" and "GRU"
 train_config['dec_size'] = 400
 train_config['n_dec_layers'] = 1  # number of layers in decoder LSTM
-train_config['n_hidden_units'] = 0  # 64  # number of hidden units on the linear layer
+train_config['n_hidden_units'] = 64  # number of hidden units on the linear layer
 train_config['z_size'] = 200  # QSampler output size
 train_config['T'] = 100  # MNIST generation sequence length
      

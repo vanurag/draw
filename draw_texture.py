@@ -152,8 +152,8 @@ def publish_nozzle_commands(write_bbs):
   nozzle_cmd.aperture_open = True
   prev_t = 0
   t = 0
-  prev_fid = -1
-  fid = -1
+  prev_spray_face = None
+  spray_face = None
 #   last_update_time = rospy.get_rostime()
   while t < write_bbs.shape[0]:
     if write_bbs[t, 3] < 0.3:
@@ -181,6 +181,7 @@ def publish_nozzle_commands(write_bbs):
     spray_normal = np.cross((vert_data[D_tri_ids[tri_id, 1]] - vert_data[D_tri_ids[tri_id, 0]]),
                              vert_data[D_tri_ids[tri_id, 2]] - vert_data[D_tri_ids[tri_id, 0]])
     spray_normal /= np.linalg.norm(spray_normal)
+    prev_spray_face = spray_face
     spray_face = np.append(spray_point, spray_normal)
 #     print('spray_face: ', spray_face)
     
@@ -188,16 +189,13 @@ def publish_nozzle_commands(write_bbs):
 #       t += 1
 #       continue
     
-    prev_fid = fid
-#     fid = pixel_face_ids[pixel_r, pixel_c]
-    
     # interpolate
-#     if prev_fid > 0:
-#       jump = np.linalg.norm(face_data[fid, :3] - face_data[prev_fid, :3])
+#     if prev_spray_face is not None:
+#       jump = np.linalg.norm(spray_face[:3] - prev_spray_face[:3])
 #       jump_intensity = write_bbs[t, 3] - write_bbs[prev_t, 3]
 #       delta = 0.01  # 0.1 = 2*spray_radius
 #       if jump > delta and jump < 0.5:
-#         jump_dir = (face_data[fid, :3] - face_data[prev_fid, :3]) / jump
+#         jump_dir = (spray_face[:3] - prev_spray_face[:3]) / jump
 #         n_interpolate = (np.floor(np.linalg.norm(jump) / delta)).astype(int)
 #         for i in range(n_interpolate):
 # #           print(jump_dir)
@@ -207,10 +205,9 @@ def publish_nozzle_commands(write_bbs):
 # #           print(face_data[prev_fid, 3:])
 # #           print(face_data[prev_fid, :3] + (i + 1) * delta * jump_dir)
 # #           print(face_data[prev_fid, 3:])
-#           int_face = np.concatenate(((face_data[prev_fid, :3] + (i + 1) * delta * jump_dir),
-#                                      face_data[prev_fid, 3:]))
+#           int_face = np.concatenate(((prev_spray_face[:3] + (i + 1) * delta * jump_dir), spray_face[:3]))
 #           int_intensity = write_bbs[prev_t, 3] + ((i + 1) * jump_intensity / n_interpolate)
-#           print(int_face)
+# #           print(int_face)
 #           _spray_face(int_face, int_intensity, publish_rate)
       
     _spray_face(spray_face, write_bbs[t, 3], publish_rate)

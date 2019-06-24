@@ -64,7 +64,7 @@ class DrawModel(object):
       self.stop_writing_threshold = tf.Variable(0.99, trainable=False)
     
     # Discriminator
-    self.df_mode = None  # dcgan, wgan, wgan-gp, or None
+    self.df_mode = 'dcgan'  # dcgan, wgan, wgan-gp, or None
 #     self.y_dim = None
     self.df_dim = 64  # num filters in first conv layer
 #     self.dfc_dim = 1024  # fully connected layer units
@@ -482,7 +482,7 @@ class DrawModel(object):
       enc_state = self.lstm_enc.zero_state(self.batch_size, tf.float32)
       dec_state = self.lstm_dec.zero_state(self.batch_size, tf.float32)
       
-      tf.summary.scalar('max draw time', self.T, collections=[self.summary_collection], family='variables')
+      tf.summary.scalar('max_draw_time', self.T, collections=[self.summary_collection], family='variables')
       
       # Generator
       t = tf.constant(0);
@@ -495,7 +495,7 @@ class DrawModel(object):
                       parallel_iterations=1)
         
       summary_decisions = tf.transpose(self.should_write_decision.stack(), perm=[1, 0, 2])[:self.n_summary_per_batch, :, :]
-      tf.summary.image('Write Decision', \
+      tf.summary.image('Write_Decision', \
                        tf.reshape(summary_decisions, shape=(1, self.n_summary_per_batch, self.config['T'], 1)), max_outputs=1, \
                        collections=[self.summary_collection])
         
@@ -730,7 +730,10 @@ class DrawModel(object):
       # clip gradients
       grads = optimizer.compute_gradients(self.loss)
       for i, (g, v) in enumerate(grads):
-        if g is not None:
+
+        def _bla(): return True
+
+        def _grad_summary(i, g, v):
           tf.summary.histogram(v.name + '_original_grad', g, collections=[self.summary_collection], family='grads')
           tf.summary.scalar(v.name + '_original_grad_norm', tf.norm(g), collections=[self.summary_collection], family='grads_norm')
           tf.summary.scalar(v.name + '_original_grad_avg', tf.reduce_mean(g), collections=[self.summary_collection], family='grads_avg')
@@ -738,6 +741,9 @@ class DrawModel(object):
           tf.summary.histogram(v.name + '_clipped_grad', grads[i][0], collections=[self.summary_collection], family='grads')
           tf.summary.scalar(v.name + '_clipped_grad_norm', tf.norm(grads[i][0]), collections=[self.summary_collection], family='grads_norm')
           tf.summary.scalar(v.name + '_clipped_grad_avg', tf.reduce_mean(grads[i][0]), collections=[self.summary_collection], family='grads_avg')
+          return True
+ 
+        tf.cond(tf.greater(tf.count_nonzero(tf.is_nan(g)), 0), lambda: _bla(), lambda: _grad_summary(i, g, v))
       self.train_op = optimizer.apply_gradients(grads, global_step=self.global_step)
       
       # Discriminator
