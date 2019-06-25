@@ -19,9 +19,20 @@ from tqdm import tqdm
 from config import train_config
 from model import DrawModel
 
+from generate_train_data import _floats_feature
+
 tf.flags.DEFINE_string("data_file", "", "")
 tf.flags.DEFINE_string("log_dir", "", "")
 FLAGS = tf.flags.FLAGS
+
+
+# A dictionary of real and fake examples needed to train a discriminator
+def discriminator_train_data(real_image, reconstructed_image):
+  feature = {
+    'real': _floats_feature(real_image),
+    'fake': _floats_feature(reconstructed_image)
+  }
+  return tf.train.Example(features=tf.train.Features(feature=feature))
 
 
 def export_config(config, output_file):
@@ -46,9 +57,6 @@ def load_data(config, data_file):
   # to a fixed shape.
   def _parse_function(filename):
     data_fmt = {
-      "height": tf.FixedLenFeature((), tf.int64, -1),
-      "width": tf.FixedLenFeature((), tf.int64, -1),
-      "depth": tf.FixedLenFeature((), tf.int64, -1),
       "image_raw": tf.FixedLenFeature((), tf.string, "")
     }
     
@@ -142,7 +150,7 @@ def main(config):
     iteration = 0
     previous_epoch = 0
     epoch = 0
-    with tqdm() as pbar:
+    with tqdm() as pbar, tf.python_io.TFRecordWriter(os.path.join(FLAGS.log_dir, 'disc_train_data.tfrecord')) as writer:
       while epoch < config['n_epochs']:
         # Next data batch
         previous_epoch = epoch
@@ -191,6 +199,7 @@ def main(config):
           valid_feed_dict[draw_model_valid.T] = draw_T
           valid_feed_dict[draw_model_valid.global_step] = step
           valid_fetches = {'summaries': valid_summaries,
+                           'reconstruction': draw_model_valid.x_recons,
                            'reconstruction_loss': draw_model_valid.Lx,
                            'generator_loss': draw_model_valid.Lg,
                            'latent_loss': draw_model_valid.Lz,
@@ -200,6 +209,14 @@ def main(config):
                            'loss': draw_model_valid.loss}
           valid_out = sess.run(valid_fetches, valid_feed_dict)
           xlog = xnext  # For saving plot data
+          
+          # Store reconstructions and the reference to TF record - for training discriminator
+          if config['save_reconstructions']:
+            n_per_batch = config['batch_size'] / config['n_epochs']  # so that the number of samples in TFRecord match the training dataset size
+            for s in range(n_per_batch):
+              disc_train_example = discriminator_train_data(xnext[s, :], valid_out['reconstruction'][s, :])
+              writer.write(disc_train_example.SerializeToString())
+        
           cost = valid_out['loss']
           print("epoch=%d, iter=%d : Lx: %f Lg: %f Lz: %f Lwrite: %f cost: %f || L_disc: %f" % \
                 (epoch, iteration, valid_out['reconstruction_loss'], valid_out['generator_loss'], \

@@ -64,7 +64,7 @@ class DrawModel(object):
       self.stop_writing_threshold = tf.Variable(0.99, trainable=False)
     
     # Discriminator
-    self.df_mode = 'dcgan'  # dcgan, wgan, wgan-gp, or None
+    self.df_mode = config['disc_mode']  # dcgan, wgan, wgan-gp, or None
 #     self.y_dim = None
     self.df_dim = 64  # num filters in first conv layer
 #     self.dfc_dim = 1024  # fully connected layer units
@@ -530,19 +530,19 @@ class DrawModel(object):
           x_recons = tf.where(tf.less(t, stop_times), tf.nn.tanh(cs.read(t)), x_recons)
           return [tf.add(t, 1), stop_times, cs, x_recons]
           
-        x_recons = tf.nn.tanh(self.cs.read(0))
+        self.x_recons = tf.nn.tanh(self.cs.read(0))
         t = tf.constant(0)
-        t, self.stop_times, self.cs, x_recons = \
+        t, self.stop_times, self.cs, self.x_recons = \
           tf.while_loop(lambda t, *_: tf.less(t, self.T), _reconstruction_loop_body,
-                        [t, self.stop_times, self.cs, x_recons], parallel_iterations=1)
+                        [t, self.stop_times, self.cs, self.x_recons], parallel_iterations=1)
         
         if self.draw_with_white:
           sx_recons = tf.transpose(
-            tf.reshape(x_recons[:self.n_summary_per_batch, :],
+            tf.reshape(self.x_recons[:self.n_summary_per_batch, :],
                        [self.n_summary_per_batch, self.B, self.A]), perm=[1, 0, 2])
         else:
           sx_recons = tf.transpose(
-            tf.reshape(1 - x_recons[:self.n_summary_per_batch, :],
+            tf.reshape(1 - self.x_recons[:self.n_summary_per_batch, :],
                        [self.n_summary_per_batch, self.B, self.A]), perm=[1, 0, 2])
         tf.summary.image('result',
                          tf.reshape(sx_recons, [1, self.B, self.n_summary_per_batch * self.A, 1]), max_outputs=1,
@@ -551,7 +551,7 @@ class DrawModel(object):
         #############################################################
         # Reconstruction loss - Cross entropy
         #############################################################
-        Lx_end = tf.reduce_sum(self.binary_crossentropy(self.input_, x_recons), 1)
+        Lx_end = tf.reduce_sum(self.binary_crossentropy(self.input_, self.x_recons), 1)
         Lx_end = tf.reduce_mean(Lx_end)
         self.Lx = Lx_end
         tf.summary.scalar('Reconstruction Loss', self.Lx, collections=[self.summary_collection], family='loss')
@@ -561,7 +561,7 @@ class DrawModel(object):
         #############################################################
         if self.df_mode is not None:
           real_data = tf.concat([self.input_, self.input_], axis=1)
-          fake_data = tf.concat([x_recons, self.input_], axis=1)
+          fake_data = tf.concat([self.x_recons, self.input_], axis=1)
           D, D_logits = self.discriminator(tf.reshape(real_data, [self.batch_size, 1, 2 * self.B, self.A]),
                                                       reuse=False if self.mode is 'training' else True)
           D_, D__logits = self.discriminator(tf.reshape(fake_data, [self.batch_size, 1, 2 * self.B, self.A]),
@@ -710,9 +710,9 @@ class DrawModel(object):
         #############################################################
         # SSIM loss
         #############################################################
-#         bla = (1 - tf.image.ssim(self.input_, x_recons, max_val=1.0)) / 2
+#         bla = (1 - tf.image.ssim(self.input_, self.x_recons, max_val=1.0)) / 2
 #         print(bla.shape)
-#         Lssim = tf.reduce_mean((1 - tf.image.ssim(self.input_, x_recons, max_val=1.0)) / 2)
+#         Lssim = tf.reduce_mean((1 - tf.image.ssim(self.input_, self.x_recons, max_val=1.0)) / 2)
         
         #############################################################
         # Total loss
