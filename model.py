@@ -743,7 +743,7 @@ class DrawModel(object):
           tf.summary.scalar(v.name + '_clipped_grad_avg', tf.reduce_mean(grads[i][0]), collections=[self.summary_collection], family='grads_avg')
           return True
  
-        tf.cond(tf.greater(tf.count_nonzero(tf.is_nan(g)), 0), lambda: _bla(), lambda: _grad_summary(i, g, v))
+#         tf.cond(tf.greater(tf.count_nonzero(tf.is_nan(g)), 0), lambda: _bla(), lambda: _grad_summary(i, g, v))
       self.train_op = optimizer.apply_gradients(grads, global_step=self.global_step)
       
       # Discriminator

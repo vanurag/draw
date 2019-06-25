@@ -150,7 +150,7 @@ def main(config):
     iteration = 0
     previous_epoch = 0
     epoch = 0
-    with tqdm() as pbar, tf.python_io.TFRecordWriter(os.path.join(FLAGS.log_dir, 'disc_train_data.tfrecord')) as writer:
+    with tqdm() as pbar, tf.python_io.TFRecordWriter(os.path.join(config['model_dir'], 'disc_train_data.tfrecord')) as writer:
       while epoch < config['n_epochs']:
         # Next data batch
         previous_epoch = epoch
@@ -245,8 +245,17 @@ def main(config):
           train_feed_dict = draw_model.get_feed_dict(xnext, cnext)
           train_feed_dict[draw_model.T] = draw_T
           train_fetches = {'summaries': training_summaries,
-                           'train_op': draw_model.train_op}
+                           'train_op': draw_model.train_op,
+                           'reconstruction': draw_model.x_recons}
           train_out = sess.run(train_fetches, train_feed_dict)
+          
+          # Store reconstructions and the reference to TF record - for training discriminator
+          if config['save_reconstructions']:
+            n_per_batch = config['batch_size'] / config['n_epochs']  # so that the number of samples in TFRecord match the training dataset size
+            for s in range(n_per_batch):
+              disc_train_example = discriminator_train_data(xnext[s, :], train_out['reconstruction'][s, :])
+              writer.write(disc_train_example.SerializeToString())
+              
           if iteration % 100 == 1:
             train_writer.add_summary(train_out['summaries'], global_step=step)
             
