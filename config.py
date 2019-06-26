@@ -69,7 +69,7 @@ train_config['draw_with_white'] = False  # draw with white ink or black ink
 train_config['draw_all_time'] = True  # Whether to stop drawing if the drawing looks close to target or keep drawing for T time steps
 train_config['mask_border'] = False  # Whether to mask the borders so that the drawing doesn't effect areas outide the image plane
 train_config['save_reconstructions'] = True  # Whether to store reconstructions to a TFRecord. Useful for pre-training discriminator.
-train_config['disc_mode'] = None  # dcgan, wgan, wgan-gp, or None 
+train_config['disc_mode'] = 'dcgan'  # dcgan, wgan, wgan-gp, or None 
      
 train_config['enc_rnn_mode'] = 'BASIC'  # The low level implementation of lstm cell. choose between "BASIC", "BLOCK" and "GRU"
 train_config['enc_size'] = 400  # number of hidden units / output size in LSTM layer

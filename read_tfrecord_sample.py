@@ -16,5 +16,5 @@ for string_record in record_iterator:
   
   print(example)
   
-  # Exit after 1 iteration as this is purely demonstrative.
+  # Exit after 1 iteration since we just display a sample
   break
