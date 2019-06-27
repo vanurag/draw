@@ -42,7 +42,7 @@ class Discriminator(object):
       print('Choose an appropriate Discriminator mode!')
       sys.exit()
 #     self.y_dim = None
-    self.df_dim = 64  # num filters in first conv layer
+    self.df_dim = config['disc_f_dim']  # num filters in first conv layer
 #     self.dfc_dim = 1024  # fully connected layer units
     # batch normalization : deals with poor initialization helps gradient flow
 #     self.d_bn = False
@@ -134,18 +134,18 @@ class Discriminator(object):
     return s_reference, s_query
     
   def build_graph(self):
-    s_reference_real, s_query_real = self.build_summary(self.real_input_)
-    tf.summary.image('reference_real', \
-                     tf.reshape(s_reference_real, [1, self.B, self.n_summary_per_batch * self.A, 1]), max_outputs=1, \
-                     collections=[self.summary_collection])  # [1, B, A, 1]
-    tf.summary.image('query_real', \
-                     tf.reshape(s_query_real, [1, self.B, self.n_summary_per_batch * self.A, 1]), max_outputs=1, \
-                     collections=[self.summary_collection])  # [1, B, A, 1]
+#     s_reference_real, s_query_real = self.build_summary(self.real_input_)
+#     tf.summary.image('reference_real', \
+#                      tf.reshape(s_reference_real, [1, self.B, self.n_summary_per_batch * self.A, 1]), max_outputs=1, \
+#                      collections=[self.summary_collection])  # [1, B, A, 1]
+#     tf.summary.image('query_real', \
+#                      tf.reshape(s_query_real, [1, self.B, self.n_summary_per_batch * self.A, 1]), max_outputs=1, \
+#                      collections=[self.summary_collection])  # [1, B, A, 1]
     s_reference_fake, s_query_fake = self.build_summary(self.fake_input_)
-    tf.summary.image('reference_fake', \
+    tf.summary.image('reference', \
                      tf.reshape(s_reference_fake, [1, self.B, self.n_summary_per_batch * self.A, 1]), max_outputs=1, \
                      collections=[self.summary_collection])  # [1, B, A, 1]
-    tf.summary.image('query_fake', \
+    tf.summary.image('query', \
                      tf.reshape(s_query_fake, [1, self.B, self.n_summary_per_batch * self.A, 1]), max_outputs=1, \
                      collections=[self.summary_collection])  # [1, B, A, 1]
       
@@ -190,47 +190,53 @@ class Discriminator(object):
     """
     Builds the loss function.
     """
-    # only need loss if we are not in inference mode
-    if self.mode is not 'inference':
-      with tf.name_scope('loss'):
+    with tf.name_scope('loss'):
 
-        if self.df_mode is not None:
-          if self.df_mode == 'wgan':
-            self.loss = tf.reduce_mean(self.fake_logits) - tf.reduce_mean(self.real_logits)
-        
-          elif self.df_mode == 'wgan-gp':
-            critic_loss = tf.reduce_mean(self.fake_logits) - tf.reduce_mean(self.real_logits)
-            tf.summary.scalar('Critic Loss', critic_loss, collections=[self.summary_collection], family='loss')
-        
-            alpha = tf.random_uniform(
-              shape=[self.batch_size, 1],
-              minval=0.,
-              maxval=1.
-            )
-            differences = self.fake_input_ - self.real_input_
-            interpolates = self.real_input_ + (alpha * differences)
-            gradients = tf.gradients(self.discriminator(interpolates), [interpolates])[0]
-            slopes = tf.sqrt(tf.reduce_sum(tf.square(gradients), reduction_indices=[1]))
-            gradient_penalty = tf.reduce_mean((slopes - 1.) ** 2)
-            tf.summary.scalar('Gradient penalty', gradient_penalty, collections=[self.summary_collection], family='loss')
-            self.loss = critic_loss + 10.0 * gradient_penalty
-        
-          elif self.df_mode == 'dcgan':
-            d_loss_fake = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
-              logits=self.fake_logits,
-              labels=tf.zeros_like(self.fake_logits)
-            ))
-            tf.summary.scalar('Discriminator Loss (fake)', d_loss_fake, collections=[self.summary_collection], family='loss')
-            d_loss_real = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
-              logits=self.real_logits,
-              labels=tf.ones_like(self.real_logits)
-            ))
-            tf.summary.scalar('Discriminator Loss (real)', d_loss_real, collections=[self.summary_collection], family='loss')
-            self.loss = (d_loss_real + d_loss_fake) / 2.
+      if self.df_mode is not None:
+        if self.df_mode == 'wgan':
+          self.Lg = -tf.reduce_mean(self.fake_logits)
+          self.loss = tf.reduce_mean(self.fake_logits) - tf.reduce_mean(self.real_logits)
+      
+        elif self.df_mode == 'wgan-gp':
+          self.Lg = -tf.reduce_mean(self.fake_logits)
+          critic_loss = tf.reduce_mean(self.fake_logits) - tf.reduce_mean(self.real_logits)
+          tf.summary.scalar('Critic Loss', critic_loss, collections=[self.summary_collection], family='loss')
+      
+          alpha = tf.random_uniform(
+            shape=[self.batch_size, 1],
+            minval=0.,
+            maxval=1.
+          )
+          differences = self.fake_input_ - self.real_input_
+          interpolates = self.real_input_ + (alpha * differences)
+          gradients = tf.gradients(self.discriminator(interpolates), [interpolates])[0]
+          slopes = tf.sqrt(tf.reduce_sum(tf.square(gradients), reduction_indices=[1]))
+          gradient_penalty = tf.reduce_mean((slopes - 1.) ** 2)
+          tf.summary.scalar('Gradient penalty', gradient_penalty, collections=[self.summary_collection], family='loss')
+          self.loss = critic_loss + 10.0 * gradient_penalty
+      
+        elif self.df_mode == 'dcgan':
+          self.Lg = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
+            logits=self.fake_logits,
+            labels=tf.ones_like(self.fake_logits)
+          ))
           
-          tf.summary.scalar('Discriminator Loss', self.loss, collections=[self.summary_collection], family='loss')
+          d_loss_fake = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
+            logits=self.fake_logits,
+            labels=tf.zeros_like(self.fake_logits)
+          ))
+          tf.summary.scalar('Discriminator Loss (fake)', d_loss_fake, collections=[self.summary_collection], family='loss')
+          d_loss_real = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
+            logits=self.real_logits,
+            labels=tf.ones_like(self.real_logits)
+          ))
+          tf.summary.scalar('Discriminator Loss (real)', d_loss_real, collections=[self.summary_collection], family='loss')
+          self.loss = (d_loss_real + d_loss_fake) / 2.
         
-        tf.summary.scalar('Total Loss', self.loss, collections=[self.summary_collection], family='loss')
+        tf.summary.scalar('Generator Loss', self.Lg, collections=[self.summary_collection], family='loss')
+        tf.summary.scalar('Discriminator Loss', self.loss, collections=[self.summary_collection], family='loss')
+      
+      tf.summary.scalar('Total Loss', self.loss, collections=[self.summary_collection], family='loss')
         
   def build_optim(self):
     """

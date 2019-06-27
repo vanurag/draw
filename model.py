@@ -1,5 +1,6 @@
 import tensorflow as tf
 import math
+import sys
 from ops import *
 from matplotlib.pyplot import axis
 
@@ -16,7 +17,7 @@ class DrawModel(object):
   Note that tf.variable_scope enables parameter sharing so that both graphs are identical.
   """
   
-  def __init__(self, config, placeholders, mode, annealing_schedules=None):
+  def __init__(self, config, placeholders, mode, discriminator=None, annealing_schedules=None):
     """
     Basic setup.
     :param config: configuration dictionary
@@ -63,18 +64,6 @@ class DrawModel(object):
     else:
       self.stop_writing_threshold = tf.Variable(0.99, trainable=False)
     
-    # Discriminator
-    self.df_mode = config['disc_mode']  # dcgan, wgan, wgan-gp, or None
-#     self.y_dim = None
-    self.df_dim = 64  # num filters in first conv layer
-#     self.dfc_dim = 1024  # fully connected layer units
-    # batch normalization : deals with poor initialization helps gradient flow
-#     self.d_bn = False
-#     self.d_bn1 = batch_norm(name='d_bn1')
-#     self.d_bn2 = batch_norm(name='d_bn2')
-#     self.d_bn3 = batch_norm(name='d_bn3')
-#     self.d_grad_penalty = False  # whether to use WGAN with gradient penalty
-    
     self.batch_size = config['batch_size']  # training minibatch size
     self.n_summary_per_batch = config['n_summary_per_batch'] 
 
@@ -83,6 +72,12 @@ class DrawModel(object):
     self.summary_collection = 'training_summaries' if mode == 'training' else 'validation_summaries'
     
     self.e = tf.random_normal((config['batch_size'], config['z_size']), mean=0, stddev=1)  # Qsampler noise
+    
+#     if discriminator is None and self.mode is not 'inference':
+#       print('Please provide a Discriminator object!')
+#       sys.exit()
+    self.discriminator = discriminator
+    self.df_mode = config['disc_mode']
     
     # Create a variable that stores how many training iterations we performed.
     # This is useful for saving/storing the network
@@ -399,79 +394,6 @@ class DrawModel(object):
 #       tf.reduce_any(tf.less(stop_sum, self.stop_writing_threshold)))
     return tf.less(t, self.T)
   
-#   def discriminator(self, image, y=None, reuse=False):
-#     with tf.variable_scope("discriminator") as scope:
-#       if reuse:
-#         scope.reuse_variables()
-#     
-#       if not self.y_dim:
-#         h0 = lrelu(conv2d(image, self.df_dim, name='discriminator.h0_conv'))
-#         if self.d_bn:
-#           h1 = lrelu(self.d_bn1(conv2d(h0, self.df_dim * 2, name='discriminator.h1_conv')))
-#           h2 = lrelu(self.d_bn2(conv2d(h1, self.df_dim * 4, name='discriminator.h2_conv')))
-#           h3 = lrelu(self.d_bn3(conv2d(h2, self.df_dim * 8, name='discriminator.h3_conv')))
-#         else:
-#           h1 = lrelu(conv2d(h0, self.df_dim * 2, name='discriminator.h1_conv'))
-#           h2 = lrelu(conv2d(h1, self.df_dim * 4, name='discriminator.h2_conv'))
-#           h3 = lrelu(conv2d(h2, self.df_dim * 8, name='discriminator.h3_conv'))
-#         h4 = linear(tf.reshape(h3, [self.batch_size, -1]), 1)
-#     
-#         return tf.nn.sigmoid(h4), h4
-#       else:
-#         yb = tf.reshape(y, [self.batch_size, 1, 1, self.y_dim])
-#         x = conv_cond_concat(image, yb)
-#     
-#         h0 = lrelu(conv2d(x, 1 + self.y_dim, name='discriminator.h0_conv'))
-#         h0 = conv_cond_concat(h0, yb)
-#     
-#         if self.d_bn:
-#           h1 = lrelu(self.d_bn1(conv2d(h0, self.df_dim + self.y_dim, name='discriminator.h1_conv')))
-#         else:
-#           h1 = lrelu(conv2d(h0, self.df_dim + self.y_dim, name='discriminator.h1_conv'))
-#         h1 = tf.reshape(h1, [self.batch_size, -1])      
-#         h1 = concat([h1, y], 1)
-#         
-#         if self.d_bn:
-#           h2 = lrelu(self.d_bn2(linear(h1, self.dfc_dim)))
-#         else:
-#           h2 = lrelu(linear(h1, self.dfc_dim))
-#         h2 = concat([h2, y], 1)
-#     
-#         h3 = linear(h2, 1)
-#         
-#         return tf.nn.sigmoid(h3), h3
-
-  def discriminator(self, inputs, reuse=False):
-
-    def LeakyReLU(x, alpha=0.2):
-      return tf.maximum(alpha * x, x)
-  
-    with tf.variable_scope("discriminator") as scope:
-      if reuse:
-        scope.reuse_variables()
-        
-      output = tf.reshape(inputs, [-1, 1, 2 * self.B, self.A])
-  
-      output = lib.ops.conv2d.Conv2D('Discriminator.1', 1, self.df_dim, 5, output, stride=2)
-      output = LeakyReLU(output)
-  
-      output = lib.ops.conv2d.Conv2D('Discriminator.2', self.df_dim, 2 * self.df_dim, 5, output, stride=2)
-      if self.df_mode == 'wgan':
-          output = lib.ops.batchnorm.Batchnorm('Discriminator.BN2', [0, 2, 3], output)
-      output = LeakyReLU(output)
-  
-      output = lib.ops.conv2d.Conv2D('Discriminator.3', 2 * self.df_dim, 4 * self.df_dim, 5, output, stride=2)
-      if self.df_mode == 'wgan':
-          output = lib.ops.batchnorm.Batchnorm('Discriminator.BN3', [0, 2, 3], output)
-      output = LeakyReLU(output)
-  
-      output = tf.reshape(output, [-1, 4 * 4 * 4 * self.df_dim])
-      output = lib.ops.linear.Linear('Discriminator.Output', 4 * 4 * 4 * self.df_dim, 1, output)
-      
-      output = tf.reshape(output, [-1])
-  
-      return tf.nn.sigmoid(output), output
-    
   def build_model(self):
     """
     Builds the actual model.
@@ -535,7 +457,7 @@ class DrawModel(object):
         t, self.stop_times, self.cs, self.x_recons = \
           tf.while_loop(lambda t, *_: tf.less(t, self.T), _reconstruction_loop_body,
                         [t, self.stop_times, self.cs, self.x_recons], parallel_iterations=1)
-        
+          
         if self.draw_with_white:
           sx_recons = tf.transpose(
             tf.reshape(self.x_recons[:self.n_summary_per_batch, :],
@@ -560,57 +482,8 @@ class DrawModel(object):
         # Reconstruction loss - Discriminator
         #############################################################
         if self.df_mode is not None:
-          real_data = tf.concat([self.input_, self.input_], axis=1)
-          fake_data = tf.concat([self.x_recons, self.input_], axis=1)
-          D, D_logits = self.discriminator(tf.reshape(real_data, [self.batch_size, 1, 2 * self.B, self.A]),
-                                                      reuse=False if self.mode is 'training' else True)
-          D_, D__logits = self.discriminator(tf.reshape(fake_data, [self.batch_size, 1, 2 * self.B, self.A]),
-                                                        reuse=True)
-          tf.summary.histogram('Discriminator result on input', D, collections=[self.summary_collection])
-          tf.summary.histogram('Discriminator result on reconstruction', D_, collections=[self.summary_collection])
-          
-          if self.df_mode == 'wgan':
-            self.Lg = -tf.reduce_mean(D__logits)
-            self.d_loss = tf.reduce_mean(D__logits) - tf.reduce_mean(D_logits)
-        
-          elif self.df_mode == 'wgan-gp':
-            self.Lg = -tf.reduce_mean(D__logits)
-            critic_loss = tf.reduce_mean(D__logits) - tf.reduce_mean(D_logits)
-            tf.summary.scalar('Critic Loss', critic_loss, collections=[self.summary_collection], family='loss')
-        
-            alpha = tf.random_uniform(
-              shape=[self.batch_size, 1],
-              minval=0.,
-              maxval=1.
-            )
-            differences = fake_data - real_data
-            interpolates = real_data + (alpha * differences)
-            gradients = tf.gradients(self.discriminator(interpolates), [interpolates])[0]
-            slopes = tf.sqrt(tf.reduce_sum(tf.square(gradients), reduction_indices=[1]))
-            gradient_penalty = tf.reduce_mean((slopes - 1.) ** 2)
-            tf.summary.scalar('Gradient penalty', gradient_penalty, collections=[self.summary_collection], family='loss')
-            self.d_loss = critic_loss + 10.0 * gradient_penalty
-        
-          elif self.df_mode == 'dcgan':
-            self.Lg = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
-              logits=D__logits,
-              labels=tf.ones_like(D__logits)
-            ))
-        
-            d_loss_fake = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
-              logits=D__logits,
-              labels=tf.zeros_like(D__logits)
-            ))
-            tf.summary.scalar('Discriminator Loss (fake)', d_loss_fake, collections=[self.summary_collection], family='loss')
-            d_loss_real = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
-              logits=D_logits,
-              labels=tf.ones_like(D_logits)
-            ))
-            tf.summary.scalar('Discriminator Loss (real)', d_loss_real, collections=[self.summary_collection], family='loss')
-            self.d_loss = (d_loss_real + d_loss_fake) / 2.
-          
-          tf.summary.scalar('Discriminator Loss', self.d_loss, collections=[self.summary_collection], family='loss')
-          tf.summary.scalar('Generator Loss', self.Lg, collections=[self.summary_collection], family='loss')
+          self.Lg = self.discriminator.Lg
+          self.d_loss = self.discriminator.loss
         else:
           self.Lg = tf.zeros(1)
           self.d_loss = tf.zeros(1)
@@ -746,28 +619,6 @@ class DrawModel(object):
 #         tf.cond(tf.greater(tf.count_nonzero(tf.is_nan(g)), 0), lambda: _bla(), lambda: _grad_summary(i, g, v))
       self.train_op = optimizer.apply_gradients(grads, global_step=self.global_step)
       
-      # Discriminator
-      if self.df_mode is not None:
-        d_optimizer = tf.train.AdamOptimizer(learning_rate=1e-4, beta1=0.5, beta2=0.9)
-  
-        # clip weights
-        clip_ops = []
-        for var in tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='discriminator'):
-          clip_bounds = [-.01, .01]
-          clip_ops.append(
-            tf.assign(
-              var,
-              tf.clip_by_value(var, clip_bounds[0], clip_bounds[1])
-              )
-            )
-        self.clip_disc_weights = tf.group(*clip_ops)
-      
-        d_grads = optimizer.compute_gradients(self.d_loss)
-  #       for i, (g, v) in enumerate(d_grads):
-  #         if g is not None:
-  #           grads[i] = (tf.clip_by_norm(g, 1.0), v)  # clip gradients
-        self.d_train_op = d_optimizer.apply_gradients(d_grads)
-  
   def count_parameters(self):
     """
     Counts the number of trainable parameters in this model

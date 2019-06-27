@@ -16,7 +16,7 @@ import sys
 import math
 import time
 from config import test_config
-from model import DrawModel
+from train import get_model_and_placeholders
 
 tf.flags.DEFINE_string("data_dir", "", "")
 FLAGS = tf.flags.FLAGS
@@ -56,15 +56,6 @@ def load_data(config, data_dir):
   next_testing_batch = test_dataset_iterator.get_next()
   
   return len(test_files), next_testing_batch
-
-
-def get_model_and_placeholders(config):
-    # create placeholders that we need to feed the required data into the model
-    input_pl = tf.placeholder(tf.float32, shape=(config['batch_size'], config['img_size']))
-    canvas_pl = tf.placeholder(tf.float32, shape=(config['batch_size'], config['img_size']))
-    placeholders = {'input_pl': input_pl,
-                    'canvas_pl': canvas_pl}
-    return DrawModel, placeholders
 
 
 def main(config):

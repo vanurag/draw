@@ -18,6 +18,7 @@ import time
 from tqdm import tqdm
 from config import train_config
 from model import DrawModel
+from discriminator import Discriminator
 
 from generate_train_data import _floats_feature
 
@@ -98,6 +99,15 @@ def get_model_and_placeholders(config):
                     'canvas_pl': canvas_pl}
     return DrawModel, placeholders
 
+  
+def get_disc_model_and_placeholders(config):
+    # create placeholders that we need to feed the required data into the model
+    real_data_pl = tf.placeholder(tf.float32, shape=(config['batch_size'], 2 * config['img_size']))
+    fake_data_pl = tf.placeholder(tf.float32, shape=(config['batch_size'], 2 * config['img_size']))
+    placeholders = {'real_input_pl': real_data_pl,
+                    'fake_input_pl': fake_data_pl}
+    return Discriminator, placeholders
+
 
 def main(config):
   # create unique output directory for this model
@@ -111,6 +121,21 @@ def main(config):
   
   # load the data
   next_data_batch = load_data(config, FLAGS.data_file)
+  
+  # get input placeholders and get the discriminator model
+  disc_model_class, disc_placeholders = get_disc_model_and_placeholders(config)
+    
+  if config['disc_mode'] is not None:
+    print('Building discriminator graph')
+  #   with tf.name_scope('disc/inference'):
+    if config['train_disc']:
+      disc_model = disc_model_class(config, disc_placeholders, mode='training')
+    else:
+      disc_model = disc_model_class(config, disc_placeholders, mode='inference')
+    disc_model.build_graph()
+    print('Finished building discriminator graph')
+  else:
+    disc_model = None
 
   # get input placeholders and get the model that we want to train
   draw_model_class, placeholders = get_model_and_placeholders(config)
@@ -118,15 +143,15 @@ def main(config):
   # create a training graph, this is the graph we will use to optimize the parameters
   print('Building training graph')
   with tf.name_scope('training'):
-    draw_model = draw_model_class(config, placeholders, mode='training', annealing_schedules=config['annealing_schedules'])
+    draw_model = draw_model_class(config, placeholders, mode='training', discriminator=disc_model, annealing_schedules=config['annealing_schedules'])
     draw_model.build_graph()
     print('created DRAW model with {} parameters'.format(draw_model.n_parameters))
       
   print('Building valid graph')
   with tf.name_scope('validation'):
-    draw_model_valid = draw_model_class(config, placeholders, mode='validation', annealing_schedules=config['annealing_schedules'])
+    draw_model_valid = draw_model_class(config, placeholders, mode='validation', discriminator=disc_model, annealing_schedules=config['annealing_schedules'])
     draw_model_valid.build_graph()
-    print('Finished Building valid graphs')
+    print('Finished building valid graphs')
     
   with tf.Session() as sess:
     # Add the ops to initialize variables.
@@ -142,6 +167,17 @@ def main(config):
     
     # create a saver for writing training checkpoints
     saver = tf.train.Saver(var_list=tf.trainable_variables(), max_to_keep=50)
+    
+    # Restore pre-trained discriminator model
+    if config['disc_preload'] and config['disc_mode'] is not None:
+      disc_saver = tf.train.Saver(var_list=tf.trainable_variables(scope='draw_discriminator'))
+      disc_ckpt_id = config['disc_checkpoint_id']
+      if disc_ckpt_id is None:
+          ckpt_path = os.path.join(os.path.abspath(config['disc_model_dir']), 'discmodel.ckpt')
+      else:
+          ckpt_path = os.path.join(os.path.abspath(config['disc_model_dir']), 'discmodel-{}'.format(disc_ckpt_id))
+      print('Evaluating ' + ckpt_path)
+      disc_saver.restore(sess, ckpt_path)
 
     # start training
     draw_T = config['T']
@@ -189,24 +225,32 @@ def main(config):
           
         # Validate every 100th iteration
         if iteration % 100 == 0:
-          # Validate discriminator
-          valid_d_feed_dict = draw_model_valid.get_feed_dict(xnext, cnext)
-          valid_d_feed_dict[draw_model_valid.global_step] = step
-          valid_d_fetches = {'discriminator_loss': draw_model_valid.d_loss}
-          valid_d_out = sess.run(valid_d_fetches, valid_d_feed_dict)
-          # Validate generator
-          valid_feed_dict = draw_model_valid.get_feed_dict(xnext, cnext)
-          valid_feed_dict[draw_model_valid.T] = draw_T
-          valid_feed_dict[draw_model_valid.global_step] = step
+          # Get reconstruction
+          recon_feed_dict = draw_model_valid.get_feed_dict(xnext, cnext)
+          recon_feed_dict[draw_model_valid.global_step] = step
+          recon_feed_dict[draw_model_valid.T] = draw_T
+          recon_fetches = {'reconstruction': draw_model_valid.x_recons}
+          recon_out = sess.run(recon_fetches, recon_feed_dict) 
+          # Validate
+          if config['disc_mode'] is not None:
+            disc_feed_dict = disc_model.get_feed_dict(
+              np.concatenate((xnext, xnext), axis=1),
+              np.concatenate((xnext, recon_out['reconstruction']), axis=1))
+          else:
+            disc_feed_dict = {}
+          valid_feed_dict = {}
+          valid_feed_dict.update(recon_feed_dict)
+          valid_feed_dict.update(disc_feed_dict)
+#           valid_feed_dict[draw_model_valid.x_recons] = recon_out['reconstruction']
           valid_fetches = {'summaries': valid_summaries,
-                           'reconstruction': draw_model_valid.x_recons,
                            'reconstruction_loss': draw_model_valid.Lx,
                            'generator_loss': draw_model_valid.Lg,
                            'latent_loss': draw_model_valid.Lz,
                            'write_loss': draw_model_valid.Lwrite,
                            'intensity_change_loss': draw_model_valid.Lintensity,
                            'movement_loss': draw_model_valid.Lmove,
-                           'loss': draw_model_valid.loss}
+                           'loss': draw_model_valid.loss,
+                           'discriminator_loss': draw_model_valid.d_loss}
           valid_out = sess.run(valid_fetches, valid_feed_dict)
           xlog = xnext  # For saving plot data
           
@@ -214,13 +258,13 @@ def main(config):
           if config['save_reconstructions']:
             n_per_batch = config['batch_size'] / config['n_epochs']  # so that the number of samples in TFRecord match the training dataset size
             for s in range(n_per_batch):
-              disc_train_example = discriminator_train_data(xnext[s, :], valid_out['reconstruction'][s, :])
+              disc_train_example = discriminator_train_data(xnext[s, :], recon_out['reconstruction'][s, :])
               writer.write(disc_train_example.SerializeToString())
         
           cost = valid_out['loss']
           print("epoch=%d, iter=%d : Lx: %f Lg: %f Lz: %f Lwrite: %f cost: %f || L_disc: %f" % \
                 (epoch, iteration, valid_out['reconstruction_loss'], valid_out['generator_loss'], \
-                 valid_out['latent_loss'], valid_out['write_loss'], cost, valid_d_out['discriminator_loss']))
+                 valid_out['latent_loss'], valid_out['write_loss'], cost, valid_out['discriminator_loss']))
           valid_writer.add_summary(valid_out['summaries'], global_step=step)
           # save this checkpoint if necessary
           if (epoch - last_saved_epoch + 1) >= config['save_checkpoints_every_epoch']:  # and cost < lowest_test_loss:
@@ -228,25 +272,30 @@ def main(config):
   #           lowest_test_loss = cost
             saver.save(sess, os.path.join(config['model_dir'], 'drawmodel'), epoch)
         else:
-          # Train discriminator
-          if draw_model.df_mode == None:
-            n_d_train_steps = 0
-          elif draw_model.df_mode == 'dcgan':
-            n_d_train_steps = 2
-          else:
-            n_d_train_steps = 5
-          for _ in range(n_d_train_steps):
-            train_d_feed_dict = draw_model.get_feed_dict(xnext, cnext)
-            train_d_fetches = {'train_op': draw_model.d_train_op}
-            train_d_out = sess.run(train_d_fetches, train_d_feed_dict)
-            if not draw_model.df_mode == 'wgan':
-              _ = sess.run(draw_model.clip_disc_weights)
+          # Get reconstruction
+          recon_feed_dict = draw_model.get_feed_dict(xnext, cnext)
+          recon_feed_dict[draw_model.T] = draw_T
+          recon_fetches = {'reconstruction': draw_model.x_recons}
+          recon_out = sess.run(recon_fetches, recon_feed_dict) 
           # Train generator
-          train_feed_dict = draw_model.get_feed_dict(xnext, cnext)
-          train_feed_dict[draw_model.T] = draw_T
+          if config['disc_mode'] is not None:
+            disc_feed_dict = disc_model.get_feed_dict(
+              np.concatenate((xnext, xnext), axis=1),
+              np.concatenate((xnext, recon_out['reconstruction']), axis=1))
+            # Train discriminator
+            if config['train_disc']:
+              train_d_fetches = {'train_d_op': disc_model.train_op}
+              train_out = sess.run(train_d_fetches, disc_feed_dict)
+              if not disc_model.df_mode == 'wgan':
+                _ = sess.run(disc_model.clip_disc_weights)
+          else:
+            disc_feed_dict = {}
+          train_feed_dict = {}
+          train_feed_dict.update(recon_feed_dict)
+          train_feed_dict.update(disc_feed_dict)
+#           train_feed_dict[draw_model.x_recons] = recon_out['reconstruction']
           train_fetches = {'summaries': training_summaries,
-                           'train_op': draw_model.train_op,
-                           'reconstruction': draw_model.x_recons}
+                           'train_op': draw_model.train_op}
           train_out = sess.run(train_fetches, train_feed_dict)
           
           # Store reconstructions and the reference to TF record - for training discriminator

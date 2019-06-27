@@ -105,16 +105,16 @@ def main(config):
   
   # create a training graph, this is the graph we will use to optimize the parameters
   print('Building training graph')
-  with tf.name_scope('training'):
-    disc_model = disc_model_class(config, placeholders, mode='training', annealing_schedules=None)
-    disc_model.build_graph()
-    print('created Discriminator with {} parameters'.format(disc_model.n_parameters))
+#   with tf.name_scope('training'):
+  disc_model = disc_model_class(config, placeholders, mode='training', annealing_schedules=None)
+  disc_model.build_graph()
+  print('created Discriminator with {} parameters'.format(disc_model.n_parameters))
       
   print('Building valid graph')
-  with tf.name_scope('validation'):
-    disc_model_valid = disc_model_class(config, placeholders, mode='validation', annealing_schedules=None)
-    disc_model_valid.build_graph()
-    print('Finished Building valid graphs')
+#   with tf.name_scope('validation'):
+  disc_model_valid = disc_model_class(config, placeholders, mode='validation', annealing_schedules=None)
+  disc_model_valid.build_graph()
+  print('Finished Building valid graphs')
     
   with tf.Session() as sess:
     # Add the ops to initialize variables.
