@@ -77,36 +77,80 @@ def load_data(config, data_file):
     sys.exit()
   
   data_files = tf.data.Dataset.list_files(data_file)
+  data_files = data_files.shuffle(buffer_size=500000)
   dataset = data_files.interleave(tf.data.TFRecordDataset, cycle_length=2)
   dataset = dataset.map(map_func=_parse_function, num_parallel_calls=4)
-  epoch_counter = tf.data.TFRecordDataset.range(config['n_epochs'])
-  dataset = epoch_counter.flat_map(lambda i: tf.data.Dataset.zip(
-    (dataset, tf.data.Dataset.from_tensors(i).repeat())))
-  dataset = dataset.repeat()
-  dataset = dataset.batch(config['batch_size'])
-  dataset = dataset.prefetch(buffer_size=config['batch_size'])
-  dataset_iterator = dataset.make_one_shot_iterator()
-  next_data_batch = dataset_iterator.get_next()
   
-  return next_data_batch
+  # Validation set
+  n_valid_samples = 10000
+  valid_dataset = dataset.take(n_valid_samples)
+  valid_dataset = valid_dataset.repeat()
+  valid_dataset = valid_dataset.batch(config['batch_size'])
+  valid_dataset = valid_dataset.prefetch(buffer_size=config['batch_size'])
+  valid_dataset_iterator = valid_dataset.make_one_shot_iterator()
+  next_valid_data_batch = valid_dataset_iterator.get_next()
+  
+  # Training set
+  train_dataset = dataset.skip(n_valid_samples)
+  epoch_counter = tf.data.TFRecordDataset.range(config['n_epochs'])
+  train_dataset = epoch_counter.flat_map(lambda i: tf.data.Dataset.zip(
+    (train_dataset, tf.data.Dataset.from_tensors(i).repeat())))
+  train_dataset = train_dataset.repeat()
+  train_dataset = train_dataset.batch(config['batch_size'])
+  train_dataset = train_dataset.prefetch(buffer_size=config['batch_size'])
+  train_dataset_iterator = train_dataset.make_one_shot_iterator()
+  next_train_data_batch = train_dataset_iterator.get_next()
+  
+  return next_train_data_batch, next_valid_data_batch
+
+
+def pre_process_data(config, epoch, data):
+  # Mask border
+  if config['mask_border']:
+    xmask = np.copy(data)
+    xmask = xmask.reshape((config['batch_size'], config['B'], config['A']))
+    xmask[:, config['write_radius']:config['B'] - config['write_radius'],
+          config['write_radius']:config['A'] - config['write_radius']] = 0.0
+    data -= np.reshape(xmask, (config['batch_size'], config['img_size']))
+    
+  # Hot start
+  if config['use_hot_start']:
+    crop_fraction = (epoch + 1) * config['crop_fraction_increase_rate']
+    if crop_fraction >= 1.0:
+      cnext = np.zeros([config['batch_size'], config['img_size']])
+      draw_T = config['T']
+    else:
+      xnext_reshaped = np.copy(data)
+      xnext_reshaped = xnext_reshaped.reshape((config['batch_size'], config['B'], config['A']))
+      start_row = np.random.randint(config['B'] * (1 - crop_fraction))  # , size=config['batch_size'])
+      start_col = np.random.randint(config['A'] * (1 - crop_fraction))  # , size=config['batch_size'])
+      xnext_reshaped[:, start_row:start_row + int(crop_fraction * config['B']), \
+                     start_col:start_col + int(crop_fraction * config['A'])] = 0.0
+      cnext = np.reshape(xnext_reshaped, (config['batch_size'], config['img_size']))
+      draw_T = max(1, int(config['T'] * crop_fraction))
+  else:
+    cnext = np.zeros([config['batch_size'], config['img_size']])
+    draw_T = config['T']
+    
+  return data, cnext, draw_T
 
 
 def get_model_and_placeholders(config):
-    # create placeholders that we need to feed the required data into the model
-    input_pl = tf.placeholder(tf.float32, shape=(config['batch_size'], config['img_size']))
-    canvas_pl = tf.placeholder(tf.float32, shape=(config['batch_size'], config['img_size']))
-    placeholders = {'input_pl': input_pl,
-                    'canvas_pl': canvas_pl}
-    return DrawModel, placeholders
+  # create placeholders that we need to feed the required data into the model
+  input_pl = tf.placeholder(tf.float32, shape=(config['batch_size'], config['img_size']))
+  canvas_pl = tf.placeholder(tf.float32, shape=(config['batch_size'], config['img_size']))
+  placeholders = {'input_pl': input_pl,
+                  'canvas_pl': canvas_pl}
+  return DrawModel, placeholders
 
   
 def get_disc_model_and_placeholders(config):
-    # create placeholders that we need to feed the required data into the model
-    real_data_pl = tf.placeholder(tf.float32, shape=(config['batch_size'], 2 * config['img_size']))
-    fake_data_pl = tf.placeholder(tf.float32, shape=(config['batch_size'], 2 * config['img_size']))
-    placeholders = {'real_input_pl': real_data_pl,
-                    'fake_input_pl': fake_data_pl}
-    return Discriminator, placeholders
+  # create placeholders that we need to feed the required data into the model
+  real_data_pl = tf.placeholder(tf.float32, shape=(config['batch_size'], 2 * config['img_size']))
+  fake_data_pl = tf.placeholder(tf.float32, shape=(config['batch_size'], 2 * config['img_size']))
+  placeholders = {'real_input_pl': real_data_pl,
+                  'fake_input_pl': fake_data_pl}
+  return Discriminator, placeholders
 
 
 def main(config):
@@ -120,7 +164,7 @@ def main(config):
   export_config(config, os.path.join(config['model_dir'], 'config.txt'))
   
   # load the data
-  next_data_batch = load_data(config, FLAGS.data_file)
+  next_train_data_batch, next_valid_data_batch = load_data(config, FLAGS.data_file)
   
   # get input placeholders and get the discriminator model
   disc_model_class, disc_placeholders = get_disc_model_and_placeholders(config)
@@ -188,43 +232,13 @@ def main(config):
     epoch = 0
     with tqdm() as pbar, tf.python_io.TFRecordWriter(os.path.join(config['model_dir'], 'disc_train_data.tfrecord')) as writer:
       while epoch < config['n_epochs']:
-        # Next data batch
-        previous_epoch = epoch
-        xnext, epoch = sess.run(next_data_batch)
-        epoch = epoch[0]
-        if (previous_epoch > 0 and epoch == 0): break
-        
         step = tf.train.global_step(sess, draw_model.global_step)
         
-        # Mask border
-        if config['mask_border']:
-          xmask = np.copy(xnext)
-          xmask = xmask.reshape((config['batch_size'], config['B'], config['A']))
-          xmask[:, config['write_radius']:config['B'] - config['write_radius'],
-                config['write_radius']:config['A'] - config['write_radius']] = 0.0
-          xnext -= np.reshape(xmask, (config['batch_size'], config['img_size']))
-          
-        # Hot start
-        if config['use_hot_start']:
-          crop_fraction = (epoch + 1) * config['crop_fraction_increase_rate']
-          if crop_fraction >= 1.0:
-            cnext = np.zeros([config['batch_size'], config['img_size']])
-            draw_T = config['T']
-          else:
-            xnext_reshaped = np.copy(xnext)
-            xnext_reshaped = xnext_reshaped.reshape((config['batch_size'], config['B'], config['A']))
-            start_row = np.random.randint(config['B'] * (1 - crop_fraction))  # , size=config['batch_size'])
-            start_col = np.random.randint(config['A'] * (1 - crop_fraction))  # , size=config['batch_size'])
-            xnext_reshaped[:, start_row:start_row + int(crop_fraction * config['B']), \
-                           start_col:start_col + int(crop_fraction * config['A'])] = 0.0
-            cnext = np.reshape(xnext_reshaped, (config['batch_size'], config['img_size']))
-            draw_T = max(1, int(config['T'] * crop_fraction))
-        else:
-          cnext = np.zeros([config['batch_size'], config['img_size']])
-          draw_T = config['T']
-          
         # Validate every 100th iteration
         if iteration % 100 == 0:
+          # Get data
+          xnext = sess.run(next_valid_data_batch)
+          xnext, cnext, draw_T = pre_process_data(config, epoch, xnext)
           # Get reconstruction
           recon_feed_dict = draw_model_valid.get_feed_dict(xnext, cnext)
           recon_feed_dict[draw_model_valid.global_step] = step
@@ -256,7 +270,7 @@ def main(config):
           
           # Store reconstructions and the reference to TF record - for training discriminator
           if config['save_reconstructions']:
-            n_per_batch = config['batch_size'] / config['n_epochs']  # so that the number of samples in TFRecord match the training dataset size
+            n_per_batch = config['batch_size']  # / config['n_epochs']  # so that the number of samples in TFRecord match the training dataset size
             for s in range(n_per_batch):
               disc_train_example = discriminator_train_data(xnext[s, :], recon_out['reconstruction'][s, :])
               writer.write(disc_train_example.SerializeToString())
@@ -272,6 +286,12 @@ def main(config):
   #           lowest_test_loss = cost
             saver.save(sess, os.path.join(config['model_dir'], 'drawmodel'), epoch)
         else:
+          # Get data
+          previous_epoch = epoch
+          xnext, epoch = sess.run(next_train_data_batch)
+          epoch = epoch[0]
+          if (previous_epoch > 0 and epoch == 0): break
+          xnext, cnext, draw_T = pre_process_data(config, epoch, xnext)
           # Get reconstruction
           recon_feed_dict = draw_model.get_feed_dict(xnext, cnext)
           recon_feed_dict[draw_model.T] = draw_T
@@ -300,9 +320,9 @@ def main(config):
           
           # Store reconstructions and the reference to TF record - for training discriminator
           if config['save_reconstructions']:
-            n_per_batch = config['batch_size'] / config['n_epochs']  # so that the number of samples in TFRecord match the training dataset size
+            n_per_batch = config['batch_size']  # / config['n_epochs']  # so that the number of samples in TFRecord match the training dataset size
             for s in range(n_per_batch):
-              disc_train_example = discriminator_train_data(xnext[s, :], train_out['reconstruction'][s, :])
+              disc_train_example = discriminator_train_data(xnext[s, :], recon_out['reconstruction'][s, :])
               writer.write(disc_train_example.SerializeToString())
               
           if iteration % 100 == 1:

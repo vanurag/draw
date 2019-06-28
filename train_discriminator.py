@@ -64,18 +64,31 @@ def load_data(config, data_file):
     sys.exit()
   
   data_files = tf.data.Dataset.list_files(data_file)
+  data_files = data_files.shuffle(buffer_size=500000)
   dataset = data_files.interleave(tf.data.TFRecordDataset, cycle_length=2)
   dataset = dataset.map(map_func=_parse_function, num_parallel_calls=4)
-  epoch_counter = tf.data.TFRecordDataset.range(config['n_epochs'])
-  dataset = epoch_counter.flat_map(lambda i: tf.data.Dataset.zip(
-    (dataset, tf.data.Dataset.from_tensors(i).repeat())))
-  dataset = dataset.repeat()
-  dataset = dataset.batch(config['batch_size'])
-  dataset = dataset.prefetch(buffer_size=config['batch_size'])
-  dataset_iterator = dataset.make_one_shot_iterator()
-  next_data_batch = dataset_iterator.get_next()
   
-  return next_data_batch
+  # Validation set
+  n_valid_samples = 10000
+  valid_dataset = dataset.take(n_valid_samples)
+  valid_dataset = valid_dataset.repeat()
+  valid_dataset = valid_dataset.batch(config['batch_size'])
+  valid_dataset = valid_dataset.prefetch(buffer_size=config['batch_size'])
+  valid_dataset_iterator = valid_dataset.make_one_shot_iterator()
+  next_valid_data_batch = valid_dataset_iterator.get_next()
+  
+  # Training set
+  train_dataset = dataset.skip(n_valid_samples)
+  epoch_counter = tf.data.TFRecordDataset.range(config['n_epochs'])
+  train_dataset = epoch_counter.flat_map(lambda i: tf.data.Dataset.zip(
+    (train_dataset, tf.data.Dataset.from_tensors(i).repeat())))
+  train_dataset = train_dataset.repeat()
+  train_dataset = train_dataset.batch(config['batch_size'])
+  train_dataset = train_dataset.prefetch(buffer_size=config['batch_size'])
+  train_dataset_iterator = train_dataset.make_one_shot_iterator()
+  next_train_data_batch = train_dataset_iterator.get_next()
+  
+  return next_train_data_batch, next_valid_data_batch
 
 
 def get_model_and_placeholders(config):
@@ -98,7 +111,7 @@ def main(config):
   export_config(config, os.path.join(config['model_dir'], 'config.txt'))
   
   # load the data
-  next_data_batch = load_data(config, FLAGS.data_file)
+  next_train_data_batch, next_valid_data_batch = load_data(config, FLAGS.data_file)
 
   # get input placeholders and get the model that we want to train
   disc_model_class, placeholders = get_model_and_placeholders(config)
@@ -138,20 +151,16 @@ def main(config):
     epoch = 0
     with tqdm() as pbar:
       while epoch < config['n_epochs']:
-        # Next data batch
         previous_epoch = epoch
-#         bla = sess.run(next_data_batch)
-#         print('size: ', len(bla))
-        data_next, epoch = sess.run(next_data_batch)
-        real_next = data_next[0]
-        fake_next = data_next[1]
-        epoch = epoch[0]
-        if (previous_epoch > 0 and epoch == 0): break
-        
         step = tf.train.global_step(sess, disc_model.global_step)
         
         # Validate every 100th iteration
         if iteration % 100 == 0:
+          # Get data
+          data_next = sess.run(next_valid_data_batch)
+          real_next = data_next[0]
+          fake_next = data_next[1]
+          # Validata
           valid_feed_dict = disc_model_valid.get_feed_dict(real_next, fake_next)
           valid_feed_dict[disc_model_valid.global_step] = step
           valid_fetches = {'loss': disc_model_valid.loss, 'summaries': valid_summaries}
@@ -166,6 +175,12 @@ def main(config):
   #           lowest_test_loss = cost
             saver.save(sess, os.path.join(config['model_dir'], 'discmodel'), epoch)
         else:
+          # Get data
+          data_next, epoch = sess.run(next_train_data_batch)
+          real_next = data_next[0]
+          fake_next = data_next[1]
+          epoch = epoch[0]
+          if (previous_epoch > 0 and epoch == 0): break
           # Train discriminator
           train_feed_dict = disc_model.get_feed_dict(real_next, fake_next)
           train_fetches = {'train_op': disc_model.train_op, 'summaries': training_summaries}

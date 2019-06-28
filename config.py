@@ -78,12 +78,12 @@ train_config['mask_border'] = False  # Whether to mask the borders so that the d
 train_config['save_reconstructions'] = False  # Whether to store reconstructions to a TFRecord. Useful for pre-training discriminator.
 
 # Discriminator
-train_config['disc_mode'] = 'dcgan'  # dcgan, wgan, wgan-gp, or None
+train_config['disc_mode'] = None  # 'dcgan'  # dcgan, wgan, wgan-gp, or None
 train_config['disc_f_dim'] = 32  # Number of filters in first conv layer
-train_config['disc_preload'] = False  # Whether to preload a previously trained discriminator
+train_config['disc_preload'] = True  # Whether to preload a previously trained discriminator
 train_config['train_disc'] = True  # Whether to train discriminator simultaneously
-train_config['disc_model_dir'] = '/media/anurag/DATA-EXT/texture-synthesis/texture-datasets/ETH_Synthesizability/logs/DISC_1561642335'
-train_config['disc_checkpoint_id'] = None
+train_config['disc_model_dir'] = '/media/anurag/DATA-EXT/texture-synthesis/texture-datasets/ETH_Synthesizability/logs/DISC_1561717803'
+train_config['disc_checkpoint_id'] = 8
      
 train_config['enc_rnn_mode'] = 'BASIC'  # The low level implementation of lstm cell. choose between "BASIC", "BLOCK" and "GRU"
 train_config['enc_size'] = 400  # number of hidden units / output size in LSTM layer
