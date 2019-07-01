@@ -120,7 +120,7 @@ def export_draw_result_to_file(file_handle, write_bbs):
 def publish_nozzle_commands(write_bbs):
 
   # Spray on a specific face (x,y,z,nx,ny,nz)
-  def _spray_face(face, flow_scaling, spray_rate):
+  def _spray_face(face, flow_scaling, spray_rate, nozzle_command_publisher):
     # X axis of the nozzle is the direction of spray
     face_normal = face[3:]
     if not np.isclose(np.linalg.norm(face_normal), 1., atol=1e-2):
@@ -142,12 +142,11 @@ def publish_nozzle_commands(write_bbs):
     
     nozzle_cmd.nozzle_flow_scaling = flow_scaling;
     
-    pub.publish(nozzle_cmd)
+    nozzle_command_publisher.publish(nozzle_cmd)
     spray_rate.sleep()
     
-  global pixel_face_ids, vert_data, D_tri, D_tri_ids
-  pub = rospy.Publisher('nozzle_state', NozzleState, queue_size=10)
-  publish_rate = rospy.Rate(10)
+  global pixel_face_ids, vert_data, D_tri, D_tri_ids, nozzle_command_publisher
+  publish_rate = rospy.Rate(5)
   nozzle_cmd = NozzleState()
   nozzle_cmd.aperture_open = True
   prev_t = 0
@@ -210,7 +209,7 @@ def publish_nozzle_commands(write_bbs):
 # #           print(int_face)
 #           _spray_face(int_face, int_intensity, publish_rate)
       
-    _spray_face(spray_face, write_bbs[t, 3], publish_rate)
+    _spray_face(spray_face, write_bbs[t, 3], publish_rate, nozzle_command_publisher)
     
 #     if (rospy.get_rostime() - last_update_time).to_sec() > time_per_state:
 #       t += 1
@@ -219,12 +218,14 @@ def publish_nozzle_commands(write_bbs):
     t += 1
     
   nozzle_cmd.aperture_open = False
-  pub.publish(nozzle_cmd)
+  nozzle_command_publisher.publish(nozzle_cmd)
 
   
 def main(config):
   # ROS node
   rospy.init_node('draw_texture')
+  global nozzle_command_publisher
+  nozzle_command_publisher = rospy.Publisher('nozzle_state', NozzleState, queue_size=10)
   
   # Load texture image
   test_textures, next_texture, next_texture_shape = load_data(
