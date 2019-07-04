@@ -209,7 +209,7 @@ class Discriminator(object):
           )
           differences = self.fake_input_ - self.real_input_
           interpolates = self.real_input_ + (alpha * differences)
-          gradients = tf.gradients(self.discriminator(interpolates), [interpolates])[0]
+          gradients = tf.gradients(self.build_model(interpolates), [interpolates])[0]
           slopes = tf.sqrt(tf.reduce_sum(tf.square(gradients), reduction_indices=[1]))
           gradient_penalty = tf.reduce_mean((slopes - 1.) ** 2)
           tf.summary.scalar('Gradient penalty', gradient_penalty, collections=[self.summary_collection], family='loss')
