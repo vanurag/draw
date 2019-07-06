@@ -206,6 +206,9 @@ class DrawModel(object):
   def binary_crossentropy(self, t, o):
     return -(t * tf.log(o + self.eps) + (1.0 - t) * tf.log(1.0 - o + self.eps))
   
+  def l2_loss(self, t, o):
+    return (t - o) ** 2
+  
   def filterbank(self, gx, gy, sigma2, delta, N):
     grid_i = tf.reshape(tf.cast(tf.range(N), tf.float32), [1, -1])
     mu_x = gx + (grid_i - N / 2 - 0.5) * delta  # eq 19
@@ -329,7 +332,8 @@ class DrawModel(object):
       return y
 
     with tf.variable_scope("write_decision", reuse=self.DO_SHARE):
-      sw_log_odds = linear2(h_dec, 1, hidden_layer_size=self.config['n_hidden_units'])
+      sw_log_odds = linear2(h_dec, 1, hidden_layer_size=0, bias_initializer=tf.constant_initializer(10, tf.float32))
+#       sw_log_odds = linear2(h_dec, 1, hidden_layer_size=self.config['n_hidden_units'], bias_initializer=tf.constant_initializer(1, tf.float32))
       
     sw_pre_sigmoid = _concrete_binary_pre_sigmoid_sample(sw_log_odds, self.write_decision_temperature)
     sw = tf.sigmoid(sw_pre_sigmoid)
@@ -360,12 +364,12 @@ class DrawModel(object):
     if self.draw_all_time:
       cs = cs.write(t, c_prev + write_output[0])
     else:
-      cs = cs.write(
-        t, tf.where(tf.less(stop_sum, self.stop_writing_threshold),
-                    c_prev + tf.tile(tf.sigmoid(sw_log_odd), [1, self.img_size]) * write_output[0], tf.zeros_like(c_prev)))
 #       cs = cs.write(
 #         t, tf.where(tf.less(stop_sum, self.stop_writing_threshold),
-#                     c_prev + write_output[0], tf.zeros_like(c_prev)))
+#                     c_prev + tf.tile(sw, [1, self.img_size]) * write_output[0], tf.zeros_like(c_prev)))
+      cs = cs.write(
+        t, tf.where(tf.less(stop_sum, self.stop_writing_threshold),
+                    c_prev + write_output[0], tf.zeros_like(c_prev)))
     should_write_log_odds = should_write_log_odds.write(t, sw_log_odd)
     should_write_pre_sigmoid = should_write_pre_sigmoid.write(t, sw_pre_sigmoid)
     stop_sum += 1.0 - tf.reshape(sw, [self.batch_size])
@@ -473,10 +477,24 @@ class DrawModel(object):
         #############################################################
         # Reconstruction loss - Cross entropy
         #############################################################
-        Lx_end = tf.reduce_sum(self.binary_crossentropy(self.input_, self.x_recons), 1)
-        Lx_end = tf.reduce_mean(Lx_end)
-        self.Lx = Lx_end
-        tf.summary.scalar('Reconstruction Loss', self.Lx, collections=[self.summary_collection], family='loss')
+        Lx_end_bce = tf.reduce_sum(self.binary_crossentropy(self.input_, self.x_recons), 1)
+        Lx_end_bce = tf.reduce_mean(Lx_end_bce)
+        tf.summary.scalar('Reconstruction Loss (BCE)', Lx_end_bce, collections=[self.summary_collection], family='loss')
+        
+        #############################################################
+        # Reconstruction loss - L2
+        #############################################################
+        Lx_end_l2 = tf.reduce_sum(self.l2_loss(self.input_, self.x_recons), 1)
+        Lx_end_l2 = 100.0 * tf.reduce_mean(Lx_end_l2)
+        tf.summary.scalar('Reconstruction Loss (L2)', Lx_end_l2, collections=[self.summary_collection], family='loss')
+        
+        if self.config['reconstruction_loss_type'] == 'l2':
+          self.Lx = Lx_end_l2
+        elif self.config['reconstruction_loss_type'] == 'binary_cross_entropy':
+          self.Lx = Lx_end_bce
+        else:
+          print('Invalid reconstruction loss type chosen')
+          sys.exit()
         
         #############################################################
         # Reconstruction loss - Discriminator
@@ -499,14 +517,15 @@ class DrawModel(object):
           KL = tf.add(KL, tf.where(tf.less(t, stop_times), kl_term, tf.zeros(self.batch_size)))
           return [scaling_factor, tf.add(t, 1), stop_times, mus, sigmas, logsigmas, KL]
 
-        scaling_factor = tf.constant(1.0)  # 1.0 / tf.cast(self.T, tf.float32)  # tf.constant(1.0 / self.config['T'])
+        scaling_factor = tf.constant(0.1)  # 1.0 / tf.cast(self.T, tf.float32)  # tf.constant(1.0 / self.config['T'])
         t = tf.constant(0)
         KL = tf.zeros([self.batch_size])
         scaling_factor, t, self.stop_times, self.mus, self.sigmas, self.logsigmas, KL = \
           tf.while_loop(lambda s, t, *_: tf.less(t, self.T), _latent_loss_loop_body,
                         [scaling_factor, t, self.stop_times, self.mus, self.sigmas, self.logsigmas, KL],
                         parallel_iterations=1)
-        KL = tf.divide(KL, tf.cast(self.stop_times, dtype=tf.float32))
+        if not self.draw_all_time:
+          KL = tf.divide(KL, tf.cast(self.stop_times, dtype=tf.float32))
         self.Lz = tf.reduce_mean(KL)  # average over minibatches
         tf.summary.scalar('Latent Loss', self.Lz, collections=[self.summary_collection], family='loss')
         
@@ -590,7 +609,8 @@ class DrawModel(object):
         #############################################################
         # Total loss
         #############################################################
-        self.loss = self.Lx + (self.Lg if self.df_mode is not None else 0.0) + self.Lz + self.Lwrite + self.Lintensity
+        self.loss = self.Lx + (self.Lg if self.df_mode is not None else 0.0) + self.Lz + (self.Lwrite if not self.draw_all_time else 0.0)
+#         self.loss = self.Lx + (self.Lg if self.df_mode is not None else 0.0) + self.Lz + self.Lwrite + self.Lintensity
         tf.summary.scalar('Total Loss', self.loss, collections=[self.summary_collection], family='loss')
         
   def build_optim(self):

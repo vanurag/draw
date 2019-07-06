@@ -82,7 +82,7 @@ def load_data(config, data_file):
   dataset = dataset.map(map_func=_parse_function, num_parallel_calls=4)
   
   # Validation set
-  n_valid_samples = 10000
+  n_valid_samples = 20000
   valid_dataset = dataset.take(n_valid_samples)
   valid_dataset = valid_dataset.repeat()
   valid_dataset = valid_dataset.batch(config['batch_size'])

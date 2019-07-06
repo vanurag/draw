@@ -4,7 +4,7 @@
 Simple implementation of http://arxiv.org/pdf/1502.04623v2.pdf in TensorFlow
 
 Example Usage: 
-  python test.py --data_dir=<test_data>
+  python test.py --test_dir=<test_data>
 
 Author: Anurag Vempati
 """
@@ -18,12 +18,12 @@ import time
 from config import test_config
 from train import get_model_and_placeholders
 
-tf.flags.DEFINE_string("data_dir", "", "")
+tf.flags.DEFINE_string("test_dir", "", "")
 FLAGS = tf.flags.FLAGS
 
 
-def load_data(config, data_dir):
-  print('Loading data from {} ...'.format(data_dir))
+def load_data(config, test_dir):
+  print('Loading data from {} ...'.format(test_dir))
 
   # Reads an image from a file, decodes it into a dense tensor, and resizes it
   # to a fixed shape.
@@ -39,7 +39,7 @@ def load_data(config, data_dir):
     return_image = tf.clip_by_value(return_image, 0.0, 0.99)  # for numeric stability during arctanh() operation
     return return_image
 
-  test_directory = data_dir
+  test_directory = test_dir
   if not os.path.exists(test_directory):
     print("Test data not found")
     sys.exit()
@@ -65,7 +65,7 @@ def main(config):
   print('Loading saved model from {}'.format(config['model_dir']))
   
   # load the data
-  _, next_data_batch = load_data(config, FLAGS.data_dir)
+  _, next_data_batch = load_data(config, FLAGS.test_dir)
 
   # get input placeholders and get the model that we want to train
   draw_model_class, placeholders = get_model_and_placeholders(config)

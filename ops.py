@@ -5,7 +5,7 @@ import tensorflow as tf
 from tensorflow.python.framework import ops
 
 
-def linear2(x, output_dim, hidden_layer_size=64):
+def linear2(x, output_dim, hidden_layer_size=64, bias_initializer=tf.zeros_initializer()):
   """
   affine transformation Wx+b
   assumes x.shape = (batch_size, num_features)
@@ -16,10 +16,10 @@ def linear2(x, output_dim, hidden_layer_size=64):
   #     return tf.matmul(x, w) + b
   
   if hidden_layer_size > 0:
-    hidden = tf.contrib.layers.fully_connected(x, hidden_layer_size, activation_fn=tf.nn.relu)
-    return tf.contrib.layers.fully_connected(hidden, output_dim, activation_fn=None)
+    hidden = tf.contrib.layers.fully_connected(x, hidden_layer_size, activation_fn=tf.nn.relu, biases_initializer=bias_initializer)
+    return tf.contrib.layers.fully_connected(hidden, output_dim, activation_fn=None, biases_initializer=bias_initializer)
   else:
-    return tf.contrib.layers.fully_connected(x, output_dim, activation_fn=None)
+    return tf.contrib.layers.fully_connected(x, output_dim, activation_fn=None, biases_initializer=bias_initializer)
   
 # def linear(input_, output_size, stddev=0.02, bias_start=0.0, with_w=False, initialization=None, weightnorm=None, gain=1.):
 #   shape = input_.get_shape().as_list()

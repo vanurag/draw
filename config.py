@@ -11,6 +11,9 @@ train_config = {}
 # train_config['mask_border'] = False  # Whether to mask the borders so that the drawing doesn't effect areas outide the image plane
 # train_config['save_reconstructions'] = False  # Whether to store reconstructions to a TFRecord. Useful for pre-training discriminator.
 #
+# Loss
+# train_config['reconstruction_loss_type'] = 'binary_cross_entropy'  # 'l2' or 'binary_cross_entropy'
+#
 # Discriminator
 # train_config['disc_mode'] = None  # dcgan, wgan, wgan-gp, or None
 # train_config['disc_f_dim'] = 32  # Number of filters in first conv layer
@@ -77,10 +80,13 @@ train_config['draw_all_time'] = True  # Whether to stop drawing if the drawing l
 train_config['mask_border'] = False  # Whether to mask the borders so that the drawing doesn't effect areas outide the image plane
 train_config['save_reconstructions'] = False  # Whether to store reconstructions to a TFRecord. Useful for pre-training discriminator.
 
+# Loss
+train_config['reconstruction_loss_type'] = 'l2'  # 'l2' or 'binary_cross_entropy'
+
 # Discriminator
-train_config['disc_mode'] = None  # 'dcgan'  # dcgan, wgan, wgan-gp, or None
+train_config['disc_mode'] = None  # 'wgan'  # dcgan, wgan, wgan-gp, or None
 train_config['disc_f_dim'] = 32  # Number of filters in first conv layer
-train_config['disc_preload'] = True  # Whether to preload a previously trained discriminator
+train_config['disc_preload'] = False  # Whether to preload a previously trained discriminator
 train_config['train_disc'] = True  # Whether to train discriminator simultaneously
 train_config['disc_model_dir'] = '/media/anurag/DATA-EXT/texture-synthesis/texture-datasets/ETH_Synthesizability/logs/DISC_1561717803'
 train_config['disc_checkpoint_id'] = 8
@@ -114,13 +120,13 @@ train_config['eps'] = 1e-8  # epsilon for numerical stability
 train_config['annealing_schedules'] = {  # decay type: ['fixed', 'linear' or 'exponential']
   "learning_rate": {
     "init": 1e-4, "min": 1e-7,
-    "decay_type": "fixed", "factor": 0.1, "iters": 5000,
+    "decay_type": "exponential", "factor": 0.1, "iters": 5000,
     "staircase": True
   },
   "write_decision_prior_log_odds": {
     "init":-2.0, "min":-9.0,
-    "decay_type": "fixed", "factor":-0.25, "iters": 1000,
-    "staircase": False
+    "decay_type": "linear", "factor":-0.25, "iters": 1000,
+    "staircase": True
   },
   "stop_writing_threshold": {
     "init": 45.0, "min": 15.0,
@@ -137,6 +143,9 @@ train_config['annealing_schedules'] = {  # decay type: ['fixed', 'linear' or 'ex
 # train_config['draw_all_time'] = True  # Whether to stop drawing if the drawing looks close to target or keep drawing for T time steps
 # train_config['mask_border'] = False  # Whether to mask the borders so that the drawing doesn't effect areas outide the image plane
 # train_config['save_reconstructions'] = False  # Whether to store reconstructions to a TFRecord. Useful for pre-training discriminator.
+#
+# Loss
+# train_config['reconstruction_loss_type'] = 'binary_cross_entropy'  # 'l2' or 'binary_cross_entropy'
 #
 # Discriminator
 # train_config['disc_mode'] = None  # dcgan, wgan, wgan-gp, or None
@@ -179,8 +188,8 @@ train_config['annealing_schedules'] = {  # decay type: ['fixed', 'linear' or 'ex
 
 test_config = train_config.copy()
 test_config['annealing_schedules'] = None
-test_config['model_dir'] = '/media/anurag/DATA-EXT/texture-synthesis/texture-datasets/ETH_Synthesizability/logs/DRAW_1560364553/'  # TODO path to the model that you want to evaluate
-test_config['checkpoint_id'] = 16  # if None, the last checkpoint will be used
+test_config['model_dir'] = '/media/anurag/DATA-EXT/texture-synthesis/texture-datasets/ETH_Synthesizability/logs/DRAW_1562349228/'  # TODO path to the model that you want to evaluate
+test_config['checkpoint_id'] = 7  # if None, the last checkpoint will be used
 
 # For layer-wise painting of a texture
 texture_config = test_config.copy()
