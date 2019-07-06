@@ -120,7 +120,7 @@ train_config['eps'] = 1e-8  # epsilon for numerical stability
 train_config['annealing_schedules'] = {  # decay type: ['fixed', 'linear' or 'exponential']
   "learning_rate": {
     "init": 1e-4, "min": 1e-7,
-    "decay_type": "exponential", "factor": 0.1, "iters": 5000,
+    "decay_type": "exponential", "factor": 0.1, "iters": 2500,
     "staircase": True
   },
   "write_decision_prior_log_odds": {
@@ -188,8 +188,8 @@ train_config['annealing_schedules'] = {  # decay type: ['fixed', 'linear' or 'ex
 
 test_config = train_config.copy()
 test_config['annealing_schedules'] = None
-test_config['model_dir'] = '/media/anurag/DATA-EXT/texture-synthesis/texture-datasets/ETH_Synthesizability/logs/DRAW_1562349228/'  # TODO path to the model that you want to evaluate
-test_config['checkpoint_id'] = 7  # if None, the last checkpoint will be used
+test_config['model_dir'] = '/media/anurag/DATA-EXT/texture-synthesis/texture-datasets/ETH_Synthesizability/logs/DRAW_1560364553/'  # TODO path to the model that you want to evaluate
+test_config['checkpoint_id'] = 16  # if None, the last checkpoint will be used
 
 # For layer-wise painting of a texture
 texture_config = test_config.copy()

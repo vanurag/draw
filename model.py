@@ -332,8 +332,8 @@ class DrawModel(object):
       return y
 
     with tf.variable_scope("write_decision", reuse=self.DO_SHARE):
-      sw_log_odds = linear2(h_dec, 1, hidden_layer_size=0, bias_initializer=tf.constant_initializer(10, tf.float32))
-#       sw_log_odds = linear2(h_dec, 1, hidden_layer_size=self.config['n_hidden_units'], bias_initializer=tf.constant_initializer(1, tf.float32))
+#       sw_log_odds = linear2(h_dec, 1, hidden_layer_size=0, bias_initializer=tf.constant_initializer(10, tf.float32))
+      sw_log_odds = linear2(h_dec, 1, hidden_layer_size=self.config['n_hidden_units'])
       
     sw_pre_sigmoid = _concrete_binary_pre_sigmoid_sample(sw_log_odds, self.write_decision_temperature)
     sw = tf.sigmoid(sw_pre_sigmoid)

@@ -118,7 +118,7 @@ def export_draw_result_to_file(file_handle, write_bbs):
   return
 
 
-def publish_nozzle_commands(write_bbs, patch_col, patch_row, write_radius, extra_scaling):
+def publish_nozzle_commands(write_bbs, patch_col, patch_row, patch_width, patch_height, write_radius, extra_scaling):
 
   # Spray on a specific face (x,y,z,nx,ny,nz)
   def _spray_face(face, flow_scaling, spray_rate, nozzle_command_publisher):
@@ -156,7 +156,7 @@ def publish_nozzle_commands(write_bbs, patch_col, patch_row, write_radius, extra
   spray_face = None
 #   last_update_time = rospy.get_rostime()
   while t < write_bbs.shape[0]:
-    if write_bbs[t, 3] < 0.3:
+    if write_bbs[t, 3] < 0.5:
       t += 1
       continue
     nozzle_cmd.header.stamp = rospy.get_rostime()
@@ -213,8 +213,8 @@ def publish_nozzle_commands(write_bbs, patch_col, patch_row, write_radius, extra
     write_col = write_bbs[t, 0] - patch_col
     write_row = write_bbs[t, 1] - patch_row
     if write_col < write_radius or write_row < write_radius or \
-      write_col > FLAGS.draw_width - write_radius or write_row > FLAGS.draw_height - write_radius:
-      _spray_face(spray_face, extra_scaling * write_bbs[t, 3] / 4., publish_rate, nozzle_command_publisher)
+      write_col > patch_width - write_radius or write_row > patch_height - write_radius:
+      _spray_face(spray_face, extra_scaling * write_bbs[t, 3] / 50., publish_rate, nozzle_command_publisher)
     else:
       _spray_face(spray_face, extra_scaling * write_bbs[t, 3], publish_rate, nozzle_command_publisher)
     
@@ -305,7 +305,7 @@ def main(config):
         for l in range(n_layers):
           if l == 0:
             # Base coat
-            base_coat = np.quantile(input_texture_channel, 0.3)
+            base_coat = np.quantile(input_texture_channel, 0.2)
             M0 = (input_texture_channel >= base_coat).astype(np.float)
             F0 = base_coat * M0
             L_ref = F0
@@ -350,7 +350,7 @@ def main(config):
               # export
               export_draw_result_to_file(output_file, write_bounding_boxes)
               # publish
-              publish_nozzle_commands(write_bounding_boxes, patch_start_col, patch_start_row, config['write_radius'], 1 ** l)
+              publish_nozzle_commands(write_bounding_boxes, patch_start_col, patch_start_row, config['A'], config['B'], config['write_radius'], 2 ** l)
               
               draw_result[patch_start_row:patch_end_row, patch_start_col:patch_end_col] += \
                 np.reshape(canvases[write_times - 1, :], (config['B'], config['A']))[:patch_end_row - patch_start_row, :patch_end_col - patch_start_col]
